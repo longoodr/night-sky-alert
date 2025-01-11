@@ -41,6 +41,10 @@ def get_forecast(lat: float, lon: float) -> dict:
     response = requests.get(url).json()
     return response
 
+def get_fake_forecast() -> dict:
+    with open('fake_onecall.json') as f:
+        return json.load(f)
+
 def get_bodies(lat: float, lon: float, elevation: float, date: datetime) -> dict:
     date_param = date.strftime('%Y-%m-%d')
     time_param = date.strftime('%H:%M:%S')
@@ -107,7 +111,7 @@ LAT, LON = get_coords(LOCATION_STR)
 ELEVATION = get_elevation(LAT, LON)
 print(f"Location: {LOCATION_STR} -> Lat: {LAT}, Lon: {LON}, Elevation: {ELEVATION}")
 
-weather = DayWeather(get_forecast(LAT, LON))
+weather = DayWeather(get_fake_forecast())
 good_intervals = weather.get_good_viewing_intervals()
 if not good_intervals:
     print("No good viewing intervals found.")
