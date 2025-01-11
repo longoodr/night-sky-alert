@@ -1,0 +1,30 @@
+name: Night Sky Alert
+
+on:
+  schedule:
+    - cron: "0 22 * * *"  # Runs daily at 10 PM UTC, 5 PM EST
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13.1"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run Python script
+        env:
+            OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+            PUSHOVER_KEY: ${{ secrets.PUSHOVER_KEY }}
+            PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+            ASTRONOMYAPI_APP_ID: ${{ secrets.ASTRONOMYAPI_APP_ID }}
+            ASTRONOMYAPI_SECRET: ${{ secrets.ASTRONOMYAPI_SECRET }}
+            LOCATION: ${{ secrets.LOCATION }}
+        run: python main.py
