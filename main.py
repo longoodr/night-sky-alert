@@ -41,10 +41,6 @@ def get_forecast(lat: float, lon: float) -> dict:
     response = requests.get(url).json()
     return response
 
-def get_fake_forecast() -> dict:
-    with open('fake_onecall.json') as f:
-        return json.load(f)
-
 def get_bodies(lat: float, lon: float, elevation: float, date: datetime) -> dict:
     date_param = date.strftime('%Y-%m-%d')
     time_param = date.strftime('%H:%M:%S')
