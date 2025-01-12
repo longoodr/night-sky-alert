@@ -2,7 +2,9 @@ import base64
 import json
 import os
 from typing import Iterable
+from zoneinfo import ZoneInfo
 import requests
+from timezonefinder import TimezoneFinder
 from datetime import date, time, datetime, timedelta, timezone
 from dataclasses import dataclass
 
@@ -36,14 +38,17 @@ def get_elevation(lat: float, lon: float) -> float:
     response = requests.get(url).json()
     return response['results'][0]['elevation']
 
+
+LAT, LON = get_coords(LOCATION_STR)
+TZ = ZoneInfo(TimezoneFinder().timezone_at(lat=LAT, lng=LON))
+ELEVATION = get_elevation(LAT, LON)
+print(f"Location: {LOCATION_STR} -> Lat: {LAT}, Lon: {LON}, Elevation: {ELEVATION}")
+
+
 def get_forecast(lat: float, lon: float) -> dict:
     url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
     response = requests.get(url).json()
     return response
-
-def get_fake_forecast() -> dict:
-    with open('fake_onecall.json') as f:
-        return json.load(f)
 
 def get_bodies(lat: float, lon: float, elevation: float, date: datetime) -> dict:
     date_param = date.strftime('%Y-%m-%d')
@@ -67,17 +72,15 @@ class DayEntry:
     has_max_visiblility: bool
 
 class DayWeather:
-    date: "date"
     sunset: datetime
     after_sunset_entries: list[DayEntry]
     
     def __init__(self, forecast: dict):
-        self.date = datetime.fromtimestamp(forecast['current']['dt'], timezone.utc).date()
-        self.sunset = datetime.fromtimestamp(forecast['current']['sunset'], timezone.utc)
+        self.sunset = datetime.fromtimestamp(forecast['current']['sunset'], timezone.utc).astimezone(TZ)
         self.after_sunset_entries = []
         for entry in forecast['hourly']:
-            dt = datetime.fromtimestamp(entry['dt'], timezone.utc)
-            if dt.date() != self.date:
+            dt = datetime.fromtimestamp(entry['dt'], timezone.utc).astimezone(TZ)
+            if dt.date() != self.sunset.date():
                 break
             if dt < self.sunset:
                 continue
@@ -107,20 +110,17 @@ def yield_hours_from_intervals(intervals: list[tuple[time, time]]) -> Iterable[t
             yield current
             current += timedelta(hours=1)
 
-LAT, LON = get_coords(LOCATION_STR)
-ELEVATION = get_elevation(LAT, LON)
-print(f"Location: {LOCATION_STR} -> Lat: {LAT}, Lon: {LON}, Elevation: {ELEVATION}")
-
-weather = DayWeather(get_fake_forecast())
+weather = DayWeather(get_forecast(LAT, LON))
 good_intervals = weather.get_good_viewing_intervals()
 if not good_intervals:
     print("No good viewing intervals found.")
     exit()
 print("Good viewing intervals:")
 for start, end in good_intervals:
-    formatted_start = start.strftime("%Y-%m-%d %I:%M %p")
-    formatted_end = end.strftime("%Y-%m-%d %I:%M %p")
+    formatted_start = start.astimezone(TZ).strftime("%Y-%m-%d %I:%M %p")
+    formatted_end = end.astimezone(TZ).strftime("%Y-%m-%d %I:%M %p")
     print(f"{formatted_start} - {formatted_end}")
+    
 hour_to_good_viewing: dict[datetime, list[str]] = {}
 for dt_to_query in yield_hours_from_intervals(good_intervals):
     print(f"Checking {dt_to_query.strftime('%I:%M %p')}")
