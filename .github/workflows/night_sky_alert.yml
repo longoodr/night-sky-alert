@@ -1,0 +1,35 @@
+name: Night Sky Alert
+
+on:
+  schedule:
+    # Run daily UTC
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-sky:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Sky Alert Script
+        env:
+          LATITUDE: ${{ secrets.LATITUDE }}
+          LONGITUDE: ${{ secrets.LONGITUDE }}
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+          CLOUD_COVER_LIMIT: ${{ vars.CLOUD_COVER_LIMIT || '15' }}
+          PRECIP_PROB_LIMIT: ${{ vars.PRECIP_PROB_LIMIT || '5' }}
+          START_TIME: ${{ vars.START_TIME }}
+          END_TIME: ${{ vars.END_TIME }}
+        run: python src/main.py

@@ -1,0 +1,9 @@
+skyfield
+requests
+pytz
+pydantic
+pydantic-settings
+matplotlib
+pytest
+pytest-mock
+syrupy

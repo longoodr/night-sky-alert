@@ -1,0 +1,175 @@
+# serializer version: 1
+# name: TestEdgeCases.test_insufficient_continuous_hours
+  dict({
+    'longest_continuous_block': 1,
+    'meets_1hr_minimum': True,
+    'meets_2hr_minimum': False,
+    'total_visible_hours': 3,
+  })
+# ---
+# name: TestEdgeCases.test_no_bodies_visible
+  dict({
+    'bodies_meeting_requirement': dict({
+    }),
+    'has_visible_bodies': False,
+    'total_slots': 1,
+  })
+# ---
+# name: TestNotificationScenarios.test_ascii_chart_generation
+  '''
+  Time      Moon     Mars     Jupiter  Saturn  
+  ----------------------------------------------
+  09:00 PM ▓▓▓▓              ▓▓▓▓              
+  10:00 PM ▓▓▓▓     ░░░░     ▓▓▓▓              
+  11:00 PM ▓▓▓▓     ▓▓▓▓     ▓▓▓▓     ░░░░     
+  '''
+# ---
+# name: TestNotificationScenarios.test_mixed_conditions_partial_visibility
+  dict({
+    'continuous_blocks': dict({
+      'Jupiter': 5,
+      'Mars': 5,
+      'Moon': 5,
+      'Saturn': 4,
+    }),
+    'times': list([
+      '2025-11-24 08:00 PM',
+      '2025-11-24 10:00 PM',
+      '2025-11-25 12:00 AM',
+      '2025-11-25 01:00 AM',
+      '2025-11-25 03:00 AM',
+    ]),
+    'visibility_summary': dict({
+      '01:00 AM': 4,
+      '03:00 AM': 4,
+      '08:00 PM': 3,
+      '10:00 PM': 4,
+      '12:00 AM': 4,
+    }),
+  })
+# ---
+# name: TestNotificationScenarios.test_notification_message_formatting
+  '''
+  🌙 Clear Skies Alert! 🌙
+  Best Block: 09:00 PM-01:00 AM (4h, up to 3 bodies)
+  Weather: Cloud<15.0%, Precip<5.0%
+  
+  Moon: 09:00 PM-01:00 AM | >15° 09:00 PM-01:00 AM
+  Jupiter: 08:00 PM-02:00 AM | >15° 08:00 PM-02:00 AM
+  Mars: 10:00 PM-02:00 AM
+  '''
+# ---
+# name: TestNotificationScenarios.test_perfect_conditions_all_bodies_visible
+  dict({
+    'body_summary': dict({
+      'Jupiter': dict({
+        'altitudes': list([
+          40,
+          42,
+          45,
+          47,
+          45,
+          42,
+        ]),
+        'high_altitude_hours': 6,
+        'total_visible_hours': 6,
+      }),
+      'Mars': dict({
+        'altitudes': list([
+          5,
+          8,
+          12,
+          15,
+          18,
+          20,
+        ]),
+        'high_altitude_hours': 3,
+        'total_visible_hours': 6,
+      }),
+      'Moon': dict({
+        'altitudes': list([
+          25,
+          30,
+          35,
+          40,
+          38,
+          35,
+        ]),
+        'high_altitude_hours': 6,
+        'total_visible_hours': 6,
+      }),
+      'Saturn': dict({
+        'altitudes': list([
+          2,
+          5,
+          8,
+          10,
+        ]),
+        'high_altitude_hours': 0,
+        'total_visible_hours': 4,
+      }),
+    }),
+    'times': list([
+      '2025-11-24 08:00 PM',
+      '2025-11-24 09:00 PM',
+      '2025-11-24 10:00 PM',
+      '2025-11-24 11:00 PM',
+      '2025-11-25 12:00 AM',
+      '2025-11-25 01:00 AM',
+    ]),
+    'visibility_grid': dict({
+      '01:00 AM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+          'Saturn',
+        ]),
+        'count': 4,
+      }),
+      '08:00 PM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+        ]),
+        'count': 3,
+      }),
+      '09:00 PM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+        ]),
+        'count': 3,
+      }),
+      '10:00 PM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+          'Saturn',
+        ]),
+        'count': 4,
+      }),
+      '11:00 PM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+          'Saturn',
+        ]),
+        'count': 4,
+      }),
+      '12:00 AM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+          'Saturn',
+        ]),
+        'count': 4,
+      }),
+    }),
+  })
+# ---
