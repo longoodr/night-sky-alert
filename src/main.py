@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import datetime
 import requests
 from skyfield.api import load, Topos, wgs84
@@ -44,14 +45,19 @@ class Settings(BaseSettings):
     max_moon_illumination: float = Field(1.0, ge=0.0, le=1.0, description="Maximum moon illumination (0.0-1.0, 0=new, 1=full)")
     pushover_user_key: Optional[str] = Field(None, description="Pushover User Key")
     pushover_api_token: Optional[str] = Field(None, description="Pushover API Token")
-    start_time: Optional[str] = Field(None, pattern=r'^\d{2}:\d{2}$', description="Custom start time HH:MM")
-    end_time: Optional[str] = Field(None, pattern=r'^\d{2}:\d{2}$', description="Custom end time HH:MM")
+    start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
+    end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
 
-    @field_validator('start_time', 'end_time')
+    @field_validator('start_time', 'end_time', mode='before')
     @classmethod
     def validate_time_format(cls, v):
         if v is None or v == '':
             return None
+        if not isinstance(v, str):
+            return v
+        # Validate HH:MM format
+        if not re.match(r'^\d{2}:\d{2}$', v):
+            raise ValueError(f"Time must be in HH:MM format, got: {v}")
         try:
             h, m = map(int, v.split(':'))
             if not (0 <= h <= 23 and 0 <= m <= 59):
