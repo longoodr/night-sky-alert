@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
     end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
 
+    @field_validator('cloud_cover_limit', 'precip_prob_limit', 'min_viewing_hours', 
+                     'min_moon_illumination', 'max_moon_illumination', mode='before')
+    @classmethod
+    def validate_optional_float(cls, v):
+        """Convert empty strings to None for optional float fields, allowing use of defaults"""
+        if v == '' or v is None:
+            return None
+        return v
+    
+    @field_validator('check_interval_minutes', mode='before')
+    @classmethod
+    def validate_optional_int(cls, v):
+        """Convert empty strings to None for optional int fields, allowing use of defaults"""
+        if v == '' or v is None:
+            return None
+        return v
+
     @field_validator('start_time', 'end_time', mode='before')
     @classmethod
     def validate_time_format(cls, v):
