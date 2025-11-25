@@ -17,6 +17,7 @@ def mock_settings():
         mock.cloud_cover_limit = 15.0
         mock.precip_prob_limit = 5.0
         mock.min_viewing_hours = 1.0
+        mock.check_interval_minutes = 1
         mock.pushover_user_key = "test_user_key"
         mock.pushover_api_token = "test_api_token"
         mock.start_time = None
@@ -145,15 +146,28 @@ def create_mock_body_position(altitude, azimuth=180):
 
 @pytest.fixture
 def mock_body_positions():
-    """Mock positions for Moon, Mars, Jupiter, Saturn"""
-    def get_position(body_name, time_hour):
-        """Return altitude based on body and time"""
+    """Mock positions for Moon, Mars, Jupiter, Saturn with sub-hour variation"""
+    def get_position(body_name, time_hour, time_minute=0):
+        """Return altitude based on body, hour, and minute (for smooth gradients)"""
+        # Base positions per hour
         positions = {
             'Moon': {20: 25, 21: 30, 22: 35, 23: 40, 0: 38, 1: 35, 2: 30, 3: 25},
             'Mars': {20: 5, 21: 8, 22: 12, 23: 15, 0: 18, 1: 20, 2: 18, 3: 15},
             'Jupiter': {20: 40, 21: 42, 22: 45, 23: 47, 0: 45, 1: 42, 2: 38, 3: 35},
             'Saturn': {20: -5, 21: -3, 22: 2, 23: 5, 0: 8, 1: 10, 2: 8, 3: 5}
         }
-        return positions.get(body_name, {}).get(time_hour, -10)
+        
+        base_alt = positions.get(body_name, {}).get(time_hour, -10)
+        
+        # Add sub-hour variation based on minutes (smooth transition within hour)
+        # Each 15 minutes represents ~1/4 progress to next hour
+        next_hour = (time_hour + 1) % 24
+        next_alt = positions.get(body_name, {}).get(next_hour, base_alt)
+        
+        # Linear interpolation based on minutes
+        minute_fraction = time_minute / 60.0
+        interpolated_alt = base_alt + (next_alt - base_alt) * minute_fraction
+        
+        return interpolated_alt
     
     return get_position

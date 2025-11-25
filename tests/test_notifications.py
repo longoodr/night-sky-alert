@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 import base64
 from io import BytesIO
 from pathlib import Path
+import hashlib
 
 from conftest import (
     mock_settings, 
@@ -33,28 +34,25 @@ class TestNotificationScenarios:
         
         eastern = pytz.timezone('America/New_York')
         
-        # Create test data matching good weather scenario
-        sorted_times = [
-            eastern.localize(datetime.datetime(2025, 11, 24, 20, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 24, 21, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 24, 22, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 24, 23, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 25, 0, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 25, 1, 0)),
-        ]
+        # Create 15-minute interval test data (6 hours = 24 intervals)
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = []
+        for i in range(6 * 4):  # 6 hours * 4 (15-min intervals per hour)
+            sorted_times.append(start_time + datetime.timedelta(minutes=i * 15))
         
         targets = ['Moon', 'Mars', 'Jupiter', 'Saturn']
         
-        # Build visibility grid
+        # Build visibility grid with 15-minute granularity
         visibility_grid = {}
         body_visibility = {name: [] for name in targets}
         
         for dt in sorted_times:
             hour = dt.hour
+            minute = dt.minute
             visible_bodies = []
             
             for body_name in targets:
-                alt = mock_body_positions(body_name, hour)
+                alt = mock_body_positions(body_name, hour, minute)
                 if alt > 0:
                     visible_bodies.append(body_name)
                     body_visibility[body_name].append({
@@ -68,8 +66,30 @@ class TestNotificationScenarios:
                 'count': len(visible_bodies)
             }
         
-        # Generate chart
-        image_data = create_visibility_chart(sorted_times, visibility_grid, body_visibility, targets)
+        # Simulate continuous blocks (all times for bodies meeting requirements)
+        continuous_blocks = {
+            'Moon': sorted_times,
+            'Mars': sorted_times,
+            'Jupiter': sorted_times,
+            'Saturn': sorted_times[12:]  # Last 3 hours
+        }
+        
+        # Mock weather blocks (all good weather for this test)
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            weather_blocks[nearest_hour] = {'cloud': 10, 'precip': 0, 'good': True}
+        
+        # Generate chart with continuous block highlighting
+        image_data = create_visibility_chart(
+            sorted_times, 
+            visibility_grid, 
+            body_visibility, 
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕'  # Full moon for test
+        )
         
         # Verify image was created
         assert image_data is not None
@@ -86,8 +106,13 @@ class TestNotificationScenarios:
         with open(image_path, 'wb') as f:
             f.write(image_bytes)
         
-        # Snapshot the visibility data structure
+        # Calculate image hash for content equivalence testing
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Snapshot the visibility data structure and image hash
         snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
             'times': [dt.strftime('%Y-%m-%d %I:%M %p') for dt in sorted_times],
             'visibility_grid': {
                 dt.strftime('%I:%M %p'): {
@@ -120,28 +145,26 @@ class TestNotificationScenarios:
         
         eastern = pytz.timezone('America/New_York')
         
-        # Only good weather times (cloud < 15%, precip < 5%)
-        # From mock_weather_data_mixed: hours 20, 22, 0, 1, 3
-        sorted_times = [
-            eastern.localize(datetime.datetime(2025, 11, 24, 20, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 24, 22, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 25, 0, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 25, 1, 0)),
-            eastern.localize(datetime.datetime(2025, 11, 25, 3, 0)),
-        ]
+        # Create 15-minute interval test data spanning entire night (8 PM to 4 AM = 8 hours)
+        # with gaps for bad weather
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = []
+        for i in range(8 * 4):  # 8 hours * 4 (15-min intervals per hour)
+            sorted_times.append(start_time + datetime.timedelta(minutes=i * 15))
         
         targets = ['Moon', 'Mars', 'Jupiter', 'Saturn']
         
-        # Build visibility grid
+        # Build visibility grid with 15-minute granularity
         visibility_grid = {}
         body_visibility = {name: [] for name in targets}
         
         for dt in sorted_times:
             hour = dt.hour
+            minute = dt.minute
             visible_bodies = []
             
             for body_name in targets:
-                alt = mock_body_positions(body_name, hour)
+                alt = mock_body_positions(body_name, hour, minute)
                 if alt > 0:
                     visible_bodies.append(body_name)
                     body_visibility[body_name].append({
@@ -155,8 +178,37 @@ class TestNotificationScenarios:
                 'count': len(visible_bodies)
             }
         
-        # Generate chart
-        image_data = create_visibility_chart(sorted_times, visibility_grid, body_visibility, targets)
+        # Simulate continuous blocks (non-continuous due to gaps in weather)
+        # Only include specific hour ranges that have good weather
+        good_hours = [20, 22, 0, 1, 3]  # From mock_weather_data_mixed
+        continuous_blocks = {
+            'Moon': [t for t in sorted_times if t.hour == 20][:4],  # First hour only
+            'Jupiter': [t for t in sorted_times if t.hour in [0, 1]],  # Midnight to 2 AM
+        }
+        
+        # Mock weather blocks - mixed conditions (hours 21, 23, 2 are BAD)
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            hour = nearest_hour.hour
+            # Bad weather at hours 21, 23, 2
+            is_good = hour in good_hours
+            weather_blocks[nearest_hour] = {
+                'cloud': 10 if is_good else 30,
+                'precip': 0 if is_good else 15,
+                'good': is_good
+            }
+        
+        # Generate chart with continuous block highlighting
+        image_data = create_visibility_chart(
+            sorted_times, 
+            visibility_grid, 
+            body_visibility, 
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌓'  # First quarter for test
+        )
         
         # Verify image was created
         assert image_data is not None
@@ -169,8 +221,13 @@ class TestNotificationScenarios:
         with open(image_path, 'wb') as f:
             f.write(image_bytes)
         
+        # Calculate image hash
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
         # Snapshot the visibility data
         snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
             'times': [dt.strftime('%Y-%m-%d %I:%M %p') for dt in sorted_times],
             'visibility_summary': {
                 dt.strftime('%I:%M %p'): grid['count']

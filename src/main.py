@@ -14,6 +14,24 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib import font_manager
+
+# Configure matplotlib to use fonts that support emojis
+# Try to use Segoe UI Emoji (Windows), Apple Color Emoji (Mac), or Noto Color Emoji (Linux)
+emoji_fonts = ['Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', 'Symbola']
+available_fonts = [f.name for f in font_manager.fontManager.ttflist]
+
+emoji_font = None
+for font in emoji_fonts:
+    if font in available_fonts:
+        emoji_font = font
+        break
+
+if emoji_font:
+    plt.rcParams['font.family'] = ['DejaVu Sans', emoji_font]
+    print(f"Using emoji font: {emoji_font}")
+else:
+    print("No emoji font found, emojis may not render correctly")
 
 class Settings(BaseSettings):
     latitude: float = Field(..., description="Latitude of the location")
@@ -21,6 +39,9 @@ class Settings(BaseSettings):
     cloud_cover_limit: float = Field(15.0, description="Max cloud cover percentage")
     precip_prob_limit: float = Field(5.0, description="Max precipitation probability percentage")
     min_viewing_hours: float = Field(1.0, ge=0.5, description="Minimum continuous viewing hours required")
+    check_interval_minutes: int = Field(1, ge=1, le=60, description="Minutes between astronomical checks (1-60, default 1 for smooth gradients)")
+    min_moon_illumination: float = Field(0.0, ge=0.0, le=1.0, description="Minimum moon illumination (0.0-1.0, 0=new, 1=full)")
+    max_moon_illumination: float = Field(1.0, ge=0.0, le=1.0, description="Maximum moon illumination (0.0-1.0, 0=new, 1=full)")
     pushover_user_key: Optional[str] = Field(None, description="Pushover User Key")
     pushover_api_token: Optional[str] = Field(None, description="Pushover API Token")
     start_time: Optional[str] = Field(None, pattern=r'^\d{2}:\d{2}$', description="Custom start time HH:MM")
@@ -121,6 +142,42 @@ def validate_time_window_against_sun():
 # Target Bodies
 TARGETS = ['Moon', 'Mars', 'Jupiter', 'Saturn']
 
+def format_body_list(bodies_in_block: list[str], total_bodies_tracked: int) -> str:
+    """
+    Format a list of astronomical bodies for display in notification.
+    
+    Args:
+        bodies_in_block: Sorted list of body names visible in the block
+        total_bodies_tracked: Total number of bodies being tracked/meeting requirements
+    
+    Returns:
+        Formatted string with body names, prefixed with "including" only if partial visibility
+        
+    Examples:
+        - All visible (2/2): "Jupiter and Saturn"
+        - Partial (2/3): "including Jupiter and Saturn"
+        - All visible (1/1): "the Moon"
+        - Partial (1/3): "including the Moon"
+    """
+    if not bodies_in_block:
+        return ""
+    
+    # Check if all tracked bodies are visible in the block
+    all_bodies_visible = len(bodies_in_block) == total_bodies_tracked
+    
+    if len(bodies_in_block) == 1:
+        return bodies_in_block[0] if all_bodies_visible else f"including {bodies_in_block[0]}"
+    elif len(bodies_in_block) == 2:
+        if all_bodies_visible:
+            return f"{bodies_in_block[0]} and {bodies_in_block[1]}"
+        else:
+            return f"including {bodies_in_block[0]} and {bodies_in_block[1]}"
+    else:
+        if all_bodies_visible:
+            return f"{', '.join(bodies_in_block[:-1])}, and {bodies_in_block[-1]}"
+        else:
+            return f"including {', '.join(bodies_in_block[:-1])}, and {bodies_in_block[-1]}"
+
 def get_weather_forecast(lat, lon):
     # Using Open-Meteo API (Free, no key required for basic usage)
     url = "https://api.open-meteo.com/v1/forecast"
@@ -165,57 +222,129 @@ def send_pushover(message, title="Night Sky Alert", image_data=None):
     except Exception as e:
         print(f"Failed to send notification: {e}")
 
-def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targets):
-    """Create a visual chart of body visibility over time"""
-    fig, ax = plt.subplots(figsize=(10, 6))
+def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targets, continuous_blocks=None, weather_blocks=None, moon_phase_emoji=None):
+    """Create a visual chart with continuous altitude gradients and weather overlays
+    
+    Args:
+        sorted_times: List of datetime objects for each time point
+        visibility_grid: Dict mapping times to visible bodies
+        body_visibility: Dict mapping body names to visibility data
+        targets: List of body names
+        continuous_blocks: Dict mapping body names to lists of times in continuous viewing blocks
+        weather_blocks: Dict mapping datetime (hourly) to weather conditions {'cloud': float, 'precip': float, 'good': bool}
+        moon_phase_emoji: Optional emoji string representing moon phase
+    """
+    fig, ax = plt.subplots(figsize=(14, 7))
     
     # Create a matrix for the heatmap
     num_bodies = len(targets)
     num_times = len(sorted_times)
     
     # Matrix: rows = bodies, cols = times
-    # Values: 0 = not visible, 1 = visible, 2 = high (>15°)
-    matrix = [[0 for _ in range(num_times)] for _ in range(num_bodies)]
+    # Values: continuous altitude (0-90 degrees) or -1 for not visible
+    matrix = [[-1 for _ in range(num_times)] for _ in range(num_bodies)]
     
     for t_idx, dt in enumerate(sorted_times):
         for b_idx, body_name in enumerate(targets):
-            if body_name in visibility_grid[dt]['bodies']:
-                # Check if it's high
-                is_high = any(v['time'] == dt and v['high'] for v in body_visibility[body_name])
-                matrix[b_idx][t_idx] = 2 if is_high else 1
+            # Find visibility data for this exact time
+            vis_data = [v for v in body_visibility[body_name] if v['time'] == dt]
+            if vis_data:
+                matrix[b_idx][t_idx] = vis_data[0]['alt']
+            else:
+                matrix[b_idx][t_idx] = -1
     
-    # Create heatmap
-    cmap = matplotlib.colors.ListedColormap(['#1a1a1a', '#4a4a8a', '#ffd700'])
-    bounds = [0, 0.5, 1.5, 2.5]
-    norm = matplotlib.colors.BoundaryNorm(bounds, cmap.N)
+    # Create continuous colormap: black (not visible) → blues (0-30°) → cyans (30-60°) → yellows/white (60-90°)
+    # Blues for low altitudes, yellows for high altitudes
+    colors_list = [
+        (0.0, '#000000'),   # Not visible (black)
+        (0.01, '#000033'),  # Just above horizon (very dark blue)
+        (0.11, '#001a66'),  # Low (dark navy)
+        (0.22, '#003399'),  # Low (navy blue)
+        (0.33, '#0055cc'),  # Low-medium (blue) - end of bottom third
+        (0.44, '#2288dd'),  # Medium (light blue)
+        (0.55, '#44aaee'),  # Medium (bright cyan)
+        (0.66, '#66ccff'),  # Medium-high (cyan) - end of middle third
+        (0.77, '#ffdd44'),  # High (golden yellow)
+        (0.88, '#ffee88'),  # Very high (light yellow)
+        (1.0, '#ffffff')    # Zenith (white)
+    ]
     
-    im = ax.imshow(matrix, cmap=cmap, norm=norm, aspect='auto')
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list('altitude', colors_list)
     
-    # Set ticks and labels
+    # Normalize: -1 to 90 degrees mapped to 0-1 colormap range
+    # Values < 0 (not visible) → 0 (black)
+    # Values 0-90 (altitude) → 0.01-1.0 (gradient)
+    normalized_matrix = []
+    for row in matrix:
+        normalized_row = []
+        for val in row:
+            if val < 0:
+                normalized_row.append(0.0)  # Not visible
+            else:
+                # Map 0-90 degrees to 0.01-1.0
+                normalized_row.append(0.01 + (val / 90.0) * 0.99)
+        normalized_matrix.append(normalized_row)
+    
+    # Use 'none' interpolation to prevent vertical bleeding between bodies
+    # Each body row is completely independent
+    im = ax.imshow(normalized_matrix, cmap=cmap, aspect='auto', interpolation='none', vmin=0, vmax=1)
+    
+    # Add colorbar showing altitude scale
+    cbar = plt.colorbar(im, ax=ax, pad=0.02)
+    cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11)
+    cbar.set_ticks([0, 0.17, 0.34, 0.51, 0.68, 0.84, 1.0])
+    cbar.set_ticklabels(['Not Visible', '15°', '30°', '45°', '60°', '75°', '90°'])
+    
+    # Set ticks and labels - add moon emoji to Moon label
     ax.set_yticks(range(num_bodies))
-    ax.set_yticklabels(targets, fontsize=12)
+    y_labels = []
+    for target in targets:
+        if target == 'Moon' and moon_phase_emoji:
+            y_labels.append(f'Moon {moon_phase_emoji}')
+        else:
+            y_labels.append(target)
+    ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold')
     
-    # Time labels (show every hour with AM/PM)
-    time_labels = [dt.strftime('%I:%M %p') for dt in sorted_times]
-    ax.set_xticks(range(num_times))
-    ax.set_xticklabels(time_labels, rotation=45, ha='right', fontsize=10)
+    # Time labels - show at 30-minute intervals (minute == 0 or minute == 30)
+    time_indices = []
+    for i, dt in enumerate(sorted_times):
+        if dt.minute == 0 or dt.minute == 30:
+            time_indices.append(i)
     
-    # Grid
-    ax.set_xticks([x - 0.5 for x in range(1, num_times)], minor=True)
+    # If no 30-min marks found (very short timespan), fall back to showing all
+    if not time_indices:
+        time_indices = list(range(0, num_times, max(1, num_times // 8)))
+    
+    time_labels = [sorted_times[i].strftime('%I:%M %p') for i in time_indices]
+    ax.set_xticks(time_indices)
+    ax.set_xticklabels(time_labels, rotation=45, ha='right', fontsize=9)
+    
+    # Color bad weather time labels in red
+    if weather_blocks:
+        for idx, tick_idx in enumerate(time_indices):
+            dt = sorted_times[tick_idx]
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            if nearest_hour in weather_blocks and not weather_blocks[nearest_hour]['good']:
+                ax.get_xticklabels()[idx].set_color('red')
+                ax.get_xticklabels()[idx].set_weight('bold')
+    
+    # Grid - horizontal only to separate bodies, no vertical lines
     ax.set_yticks([y - 0.5 for y in range(1, num_bodies)], minor=True)
-    ax.grid(which='minor', color='white', linestyle='-', linewidth=1)
+    ax.grid(which='minor', axis='y', color='white', linestyle='-', linewidth=0.5, alpha=0.3)
     
-    # Title and legend
-    ax.set_title('Night Sky Visibility', fontsize=16, fontweight='bold', pad=20)
+    # Title with moon phase emoji if available
+    title_text = 'Visibility'
+    ax.set_title(title_text, fontsize=16, fontweight='bold', pad=20)
     ax.set_xlabel('Time', fontsize=12, fontweight='bold')
     
-    # Legend
-    legend_elements = [
-        mpatches.Patch(facecolor='#1a1a1a', label='Not Visible'),
-        mpatches.Patch(facecolor='#4a4a8a', label='Visible'),
-        mpatches.Patch(facecolor='#ffd700', label='High (>15°)')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))
+    # Add note about red time labels (bottom right corner)
+    if weather_blocks:
+        has_bad_weather = any(not wb['good'] for wb in weather_blocks.values())
+        if has_bad_weather:
+            fig.text(0.99, 0.02, 'Red times indicate poor visibility conditions', 
+                    ha='right', va='bottom', fontsize=9, style='italic', color='red',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='red', alpha=0.8))
     
     plt.tight_layout()
     
@@ -315,6 +444,7 @@ def main():
 
     good_viewing_slots = []
     all_window_slots = []  # Track all slots in the window for continuous viewing check
+    weather_blocks = {}  # Track weather conditions for each hour for chart overlay
 
     # 4. Correlate Weather with Time Window
     print("\n--- Weather Check ---")
@@ -334,6 +464,7 @@ def main():
             print(f"{dt.strftime('%Y-%m-%d %H:%M')}: Cloud {cc}%, Precip {pp}% -> {status}")
 
             all_window_slots.append({'time': dt, 'is_good': is_good})
+            weather_blocks[dt] = {'cloud': cc, 'precip': pp, 'good': is_good}
             if is_good:
                 good_viewing_slots.append(dt)
 
@@ -372,7 +503,23 @@ def main():
     print(f"\n✓ Sufficient continuous weather window available!")
     print(f"Found {len(good_viewing_slots)} total hours with good weather.")
 
-    # 6. Check Astronomical Bodies for good weather slots
+    # 6. Generate fine-grained time slots for astronomical checks
+    # We'll check astronomy every CHECK_INTERVAL_MINUTES for the ENTIRE night
+    print(f"\n--- Generating {settings.check_interval_minutes}-minute interval slots ---")
+    
+    fine_grained_slots = []
+    interval_delta = datetime.timedelta(minutes=settings.check_interval_minutes)
+    
+    # Generate slots for the entire night window (sunset to sunrise)
+    current_time = sunset_dt
+    while current_time <= sunrise_dt:
+        fine_grained_slots.append(current_time)
+        current_time += interval_delta
+    
+    print(f"Generated {len(fine_grained_slots)} time slots at {settings.check_interval_minutes}-minute intervals")
+    print(f"Spanning {sunset_dt.strftime('%I:%M %p')} to {sunrise_dt.strftime('%I:%M %p')}")
+
+    # 7. Check Astronomical Bodies for fine-grained slots
     report_lines = []
     
     # Cache body objects
@@ -380,24 +527,98 @@ def main():
     for name in TARGETS:
         bodies[name] = eph[name]
     earth = eph['earth']
+    sun = eph['sun']  # Need sun for moon phase calculation
+
+    # Initialize moon phase variables
+    moon_phase_emoji = None
+    moon_illumination = 0.5  # Default to half illuminated
+    moon_meets_illumination = True  # Default to True if no moon check
+
+    # Calculate moon phase (use middle of viewing window)
+    if fine_grained_slots:
+        mid_time = fine_grained_slots[len(fine_grained_slots) // 2]
+        t_mid = ts.from_datetime(mid_time)
+        
+        # Calculate moon phase (fraction of lunar cycle)
+        # This is the elongation between sun and moon
+        moon = eph['moon']
+        e = earth.at(t_mid)
+        sun_pos = e.observe(sun).apparent()
+        moon_pos = e.observe(moon).apparent()
+        
+        # Calculate phase angle (0 = new, 0.5 = full)
+        # Using the difference in ecliptic longitude
+        _, sun_lon, _ = sun_pos.ecliptic_latlon()
+        _, moon_lon, _ = moon_pos.ecliptic_latlon()
+        phase_angle = (moon_lon.degrees - sun_lon.degrees) % 360
+        
+        # Convert to moon phase (0-1 where 0=new, 0.5=full, 1=new)
+        phase = phase_angle / 360.0
+        
+        # Select emoji based on phase
+        if phase < 0.0625 or phase > 0.9375:
+            moon_phase_emoji = '🌑'  # New moon
+        elif phase < 0.1875:
+            moon_phase_emoji = '🌒'  # Waxing crescent
+        elif phase < 0.3125:
+            moon_phase_emoji = '🌓'  # First quarter
+        elif phase < 0.4375:
+            moon_phase_emoji = '🌔'  # Waxing gibbous
+        elif phase < 0.5625:
+            moon_phase_emoji = '🌕'  # Full moon
+        elif phase < 0.6875:
+            moon_phase_emoji = '🌖'  # Waning gibbous
+        elif phase < 0.8125:
+            moon_phase_emoji = '🌗'  # Last quarter
+        else:
+            moon_phase_emoji = '🌘'  # Waning crescent
+        
+        # Calculate moon illumination (0 = new, 1 = full)
+        # Illumination is approximately: (1 - cos(phase_angle_radians)) / 2
+        import math
+        phase_angle_radians = (phase_angle / 180.0) * math.pi
+        moon_illumination = (1.0 - math.cos(phase_angle_radians)) / 2.0
+        
+        print(f"\nMoon Phase: {moon_phase_emoji} ({phase*100:.1f}% of cycle)")
+        print(f"Moon Illumination: {moon_illumination*100:.1f}% (Config allows {settings.min_moon_illumination*100:.0f}%-{settings.max_moon_illumination*100:.0f}%)")
+        
+        # Check if moon meets illumination requirements
+        moon_meets_illumination = settings.min_moon_illumination <= moon_illumination <= settings.max_moon_illumination
+        if not moon_meets_illumination:
+            print(f"⚠ Moon does not meet illumination requirements - will be excluded from visibility checks")
 
     # We will group by body to make the report readable
-    # Track which bodies are visible during good weather
+    # Track ALL visibility data (for charting), and separately track good weather times
     body_visibility = {name: [] for name in TARGETS}
-    body_slots_with_weather = {name: [] for name in TARGETS}  # Tracks time+weather for each body
+    body_slots_all = {name: [] for name in TARGETS}  # ALL times body is visible
+    body_slots_good_weather = {name: [] for name in TARGETS}  # Only times with good weather
 
-    print("\n--- Astronomical Check (Good Weather Slots) ---")
-    for dt in good_viewing_slots:
+    print("\n--- Astronomical Check (Fine-Grained Intervals) ---")
+    for dt in fine_grained_slots:
+        # Check if this time has good weather (find nearest hourly slot)
+        nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+        has_good_weather = nearest_hour in weather_blocks and weather_blocks[nearest_hour]['good']
+        
         t = ts.from_datetime(dt)
         observer_loc = earth + observer
         
-        print(f"Time: {dt.strftime('%I:%M %p')}")
+        # Only print every hour to avoid spam
+        if dt.minute == 0 or dt == fine_grained_slots[0]:
+            weather_status = "GOOD" if has_good_weather else "BAD"
+            print(f"Time: {dt.strftime('%I:%M %p')} (Weather: {weather_status})")
+        
         for name, body in bodies.items():
+            # Skip Moon if it doesn't meet illumination requirements
+            if name == 'Moon' and not moon_meets_illumination:
+                continue
+                
             astrometric = observer_loc.at(t).observe(body)
             alt, az, distance = astrometric.apparent().altaz()
             
             alt_degrees = alt.degrees
-            print(f"  {name}: Alt {alt_degrees:.2f}°, Az {az.degrees:.2f}°")
+            
+            if dt.minute == 0 or dt == fine_grained_slots[0]:
+                print(f"  {name}: Alt {alt_degrees:.2f}°, Az {az.degrees:.2f}°")
             
             if alt_degrees > 0:
                 is_high = alt_degrees >= 15
@@ -406,26 +627,33 @@ def main():
                     'alt': alt_degrees,
                     'high': is_high
                 })
-                body_slots_with_weather[name].append(dt)
+                body_slots_all[name].append(dt)
+                
+                # Only add to good weather list if weather is acceptable
+                if has_good_weather:
+                    body_slots_good_weather[name].append(dt)
 
-    # 7. Check continuous viewing time for each visible body
-    print("\n--- Continuous Viewing Per Body ---")
+    # 8. Check continuous viewing time for each visible body (using GOOD WEATHER times only)
+    print("\n--- Continuous Viewing Per Body (Good Weather Only) ---")
     bodies_meeting_requirement = {}
     
     for name in TARGETS:
-        if not body_slots_with_weather[name]:
-            print(f"{name}: Not visible above horizon")
+        if not body_slots_good_weather[name]:
+            print(f"{name}: Not visible above horizon during good weather")
             continue
         
-        # Find longest continuous block for this body
-        sorted_times = sorted(body_slots_with_weather[name])
+        # Find longest continuous block for this body during good weather
+        sorted_times = sorted(body_slots_good_weather[name])
         longest_block = []
         current_block = [sorted_times[0]]
         
+        interval_hours = settings.check_interval_minutes / 60.0
+        max_gap = interval_hours * 1.5  # Allow small gaps
+        
         for i in range(1, len(sorted_times)):
-            # Check if this slot is consecutive (1 hour apart)
+            # Check if this slot is consecutive
             time_diff = (sorted_times[i] - sorted_times[i-1]).total_seconds() / 3600
-            if time_diff <= 1.5:  # Allow up to 1.5 hours gap (accounts for hourly data)
+            if time_diff <= max_gap:
                 current_block.append(sorted_times[i])
             else:
                 if len(current_block) > len(longest_block):
@@ -436,15 +664,16 @@ def main():
         if len(current_block) > len(longest_block):
             longest_block = current_block.copy()
         
-        continuous_hours_for_body = len(longest_block)
+        # Convert block length to hours
+        continuous_hours_for_body = len(longest_block) * interval_hours
         
         if continuous_hours_for_body >= settings.min_viewing_hours:
             start = longest_block[0].strftime('%I:%M %p')
             end = longest_block[-1].strftime('%I:%M %p')
-            print(f"{name}: ✓ {continuous_hours_for_body} hours ({start}-{end})")
+            print(f"{name}: ✓ {continuous_hours_for_body:.2f} hours ({start}-{end})")
             bodies_meeting_requirement[name] = longest_block
         else:
-            print(f"{name}: ✗ Only {continuous_hours_for_body} hours (need {settings.min_viewing_hours})")
+            print(f"{name}: ✗ Only {continuous_hours_for_body:.2f} hours (need {settings.min_viewing_hours})")
     
     if not bodies_meeting_requirement:
         print(f"\n✗ No astronomical bodies meet the {settings.min_viewing_hours} hour continuous viewing requirement.")
@@ -454,21 +683,25 @@ def main():
     # 8. Create visibility grid and find best viewing blocks
     print("\n--- Analyzing Best Viewing Blocks ---")
     
-    # Build a time-indexed grid of which bodies are visible
+    # Build a time-indexed grid for ALL fine-grained time slots
+    # This will be used for the chart (shows everything)
+    visibility_grid = {}
+    for dt in fine_grained_slots:
+        visible_bodies = []
+        for name in TARGETS:
+            if dt in body_slots_all[name]:
+                visible_bodies.append(name)
+        visibility_grid[dt] = {
+            'bodies': visible_bodies,
+            'count': len(visible_bodies)
+        }
+    
+    # Build a separate list of times that meet the requirements (for alerts)
     all_qualified_times = set()
     for times_list in bodies_meeting_requirement.values():
         all_qualified_times.update(times_list)
     
     sorted_all_times = sorted(all_qualified_times)
-    
-    # For each time, count how many bodies are visible
-    visibility_grid = {}
-    for dt in sorted_all_times:
-        visible_bodies = [name for name, times in bodies_meeting_requirement.items() if dt in times]
-        visibility_grid[dt] = {
-            'bodies': visible_bodies,
-            'count': len(visible_bodies)
-        }
     
     # Find continuous blocks and score them by: (duration * avg_bodies_visible)
     viewing_blocks = []
@@ -540,9 +773,18 @@ def main():
     best_start = best_block['start'].strftime('%I:%M %p')
     best_end = best_block['end'].strftime('%I:%M %p')
     
+    # Collect all unique bodies in the best block
+    best_block_bodies = set()
+    for dt in best_block['times']:
+        best_block_bodies.update(visibility_grid[dt]['bodies'])
+    
+    # Format body list nicely
+    body_list = sorted(best_block_bodies)
+    bodies_text = format_body_list(body_list, len(bodies_meeting_requirement))
+    
     message_parts = [
         f"🌙 Clear Skies Alert! 🌙",
-        f"Best Block: {best_start}-{best_end} ({best_block['duration']}h, up to {best_block['max_bodies']} bodies)",
+        f"Best Block: {best_start}-{best_end} ({best_block['duration']}h, {bodies_text})",
         f"Weather: Cloud<{settings.cloud_cover_limit}%, Precip<{settings.precip_prob_limit}%",
         ""
     ]
@@ -571,9 +813,17 @@ def main():
         
         message_parts.append(f"{name}: {start_time}-{end_time}{high_str}")
     
-    # Generate visual chart image
+    # Generate visual chart image (use ALL fine-grained slots, not just qualified times)
     print("\n--- Generating Visibility Chart Image ---")
-    image_data = create_visibility_chart(sorted_all_times, visibility_grid, body_visibility, TARGETS)
+    image_data = create_visibility_chart(
+        fine_grained_slots,  # Use ALL time slots for full granularity
+        visibility_grid, 
+        body_visibility, 
+        TARGETS,
+        continuous_blocks=bodies_meeting_requirement,
+        weather_blocks=weather_blocks,
+        moon_phase_emoji=moon_phase_emoji
+    )
     print(f"Chart generated ({len(image_data)} bytes base64)")
 
     full_message = "\n".join(message_parts)
