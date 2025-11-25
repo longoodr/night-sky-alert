@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     cloud_cover_limit: float = Field(15.0, description="Max cloud cover percentage")
     precip_prob_limit: float = Field(5.0, description="Max precipitation probability percentage")
     min_viewing_hours: float = Field(1.0, ge=0.5, description="Minimum continuous viewing hours required")
-    check_interval_minutes: int = Field(1, ge=1, le=60, description="Minutes between astronomical checks (1-60, default 1 for smooth gradients)")
+    check_interval_minutes: int = Field(15, ge=1, le=60, description="Minutes between astronomical checks (1-60, default 15)")
     min_moon_illumination: float = Field(0.0, ge=0.0, le=1.0, description="Minimum moon illumination (0.0-1.0, 0=new, 1=full)")
     max_moon_illumination: float = Field(1.0, ge=0.0, le=1.0, description="Maximum moon illumination (0.0-1.0, 0=new, 1=full)")
     pushover_user_key: Optional[str] = Field(None, description="Pushover User Key")
@@ -48,21 +48,52 @@ class Settings(BaseSettings):
     start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
     end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
 
-    @field_validator('cloud_cover_limit', 'precip_prob_limit', 'min_viewing_hours', 
-                     'min_moon_illumination', 'max_moon_illumination', mode='before')
+    @field_validator('cloud_cover_limit', mode='before')
     @classmethod
-    def validate_optional_float(cls, v):
-        """Convert empty strings to None for optional float fields, allowing use of defaults"""
+    def validate_cloud_cover(cls, v):
+        """Convert empty strings to default for cloud_cover_limit"""
         if v == '' or v is None:
-            return None
+            return 15.0
+        return v
+    
+    @field_validator('precip_prob_limit', mode='before')
+    @classmethod
+    def validate_precip_prob(cls, v):
+        """Convert empty strings to default for precip_prob_limit"""
+        if v == '' or v is None:
+            return 5.0
+        return v
+    
+    @field_validator('min_viewing_hours', mode='before')
+    @classmethod
+    def validate_min_viewing_hours(cls, v):
+        """Convert empty strings to default for min_viewing_hours"""
+        if v == '' or v is None:
+            return 1.0
         return v
     
     @field_validator('check_interval_minutes', mode='before')
     @classmethod
-    def validate_optional_int(cls, v):
-        """Convert empty strings to None for optional int fields, allowing use of defaults"""
+    def validate_check_interval(cls, v):
+        """Convert empty strings to default for check_interval_minutes"""
         if v == '' or v is None:
-            return None
+            return 15
+        return v
+    
+    @field_validator('min_moon_illumination', mode='before')
+    @classmethod
+    def validate_min_moon(cls, v):
+        """Convert empty strings to default for min_moon_illumination"""
+        if v == '' or v is None:
+            return 0.0
+        return v
+    
+    @field_validator('max_moon_illumination', mode='before')
+    @classmethod
+    def validate_max_moon(cls, v):
+        """Convert empty strings to default for max_moon_illumination"""
+        if v == '' or v is None:
+            return 1.0
         return v
 
     @field_validator('start_time', 'end_time', mode='before')
