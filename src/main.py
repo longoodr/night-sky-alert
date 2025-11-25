@@ -240,7 +240,7 @@ def send_pushover(message, title="Night Sky Alert", image_data=None):
         "user": settings.pushover_user_key,
         "message": message,
         "title": title,
-        "monospace": 1  # Use monospace font for better grid alignment
+        "sound": "spacealarm",
     }
     
     try:
@@ -875,7 +875,7 @@ def main():
     
     # Simple message: just the header and time interval
     message_parts = [
-        "Good Night Sky Viewing!",
+        "Good night sky viewing! Go outside and look up! 🌌✨",
         f"{best_start} - {best_end}"
     ]
     
