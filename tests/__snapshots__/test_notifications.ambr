@@ -1,4 +1,44 @@
 # serializer version: 1
+# name: TestBodyFiltering.test_body_rising_during_block_excluded
+  dict({
+    'image_hash': 'c99972306cc487dc966548cd744930555e30567fdbcd0678d5c4bdac98352a04',
+    'image_size_bytes': 34060,
+    'jupiter_excluded': True,
+    'saturn_included': True,
+    'targets_in_chart': list([
+      'Saturn',
+    ]),
+  })
+# ---
+# name: TestBodyFiltering.test_body_setting_during_block_excluded
+  dict({
+    'image_hash': '4303ea4257459fc32826f17731f67dbb10717296b5af62a66144bc8817cf8853',
+    'image_size_bytes': 33826,
+    'jupiter_included': True,
+    'moon_excluded': True,
+    'targets_in_chart': list([
+      'Jupiter',
+    ]),
+  })
+# ---
+# name: TestBodyFiltering.test_chart_title_with_location_and_date
+  dict({
+    'date': 'November 24, 2025',
+    'has_date': True,
+    'has_location': True,
+    'image_hash': 'f20c60cb8caa06dbf08046f8bbff6e2cb75882d883a441d4047eea8842f029bf',
+    'image_size_bytes': 41006,
+    'location': 'Orlando',
+  })
+# ---
+# name: TestBodyFiltering.test_no_yellow_in_colormap
+  dict({
+    'altitude_degrees': 70,
+    'high_altitude_test': True,
+    'image_hash': '6b436991edcc33ac859fe1cf4b7aa832eeb26e128c59cea44e7713df71f59bdd',
+    'image_size_bytes': 33611,
+  })
+# ---
 # name: TestEdgeCases.test_insufficient_continuous_hours
   dict({
     'longest_continuous_block': 1,
@@ -32,8 +72,8 @@
       'Moon': 32,
       'Saturn': 25,
     }),
-    'image_hash': '24f1af79834c2f09aed6fada4e418e42ff4395ab2ca692636647a173a89a4be7',
-    'image_size_bytes': 66563,
+    'image_hash': '47ed95534867ea0bf660d4d25646332d7f89dba64eb8c1e09460e8e65e7b671b',
+    'image_size_bytes': 66407,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',
@@ -232,8 +272,8 @@
         'total_visible_hours': 17,
       }),
     }),
-    'image_hash': '66bcc9cbb2178227a02cd5f673d25c57d52c4edef16038d885f272b45402403e',
-    'image_size_bytes': 45269,
+    'image_hash': 'b187dc5bef8e2eb8b1336a1ae47e7b712ce85a11997403a913722883e8394a37',
+    'image_size_bytes': 45087,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',

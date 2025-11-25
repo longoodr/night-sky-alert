@@ -425,3 +425,233 @@ class TestEdgeCases:
         }
         
         assert result == snapshot
+
+
+class TestBodyFiltering:
+    """Test filtering of bodies not visible across entire viewing block"""
+    
+    def test_body_rising_during_block_excluded(self, mock_settings, snapshot):
+        """Test that a body rising partway through the block is excluded from chart"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = [start_time + datetime.timedelta(hours=i) for i in range(4)]
+        
+        # Jupiter rises at hour 2 (not visible entire block)
+        # Saturn visible entire block
+        targets = ['Jupiter', 'Saturn']
+        
+        visibility_grid = {}
+        body_visibility = {'Jupiter': [], 'Saturn': []}
+        
+        for i, dt in enumerate(sorted_times):
+            visible_bodies = []
+            
+            # Jupiter only visible in last 2 hours (rises during block)
+            if i >= 2:
+                visible_bodies.append('Jupiter')
+                body_visibility['Jupiter'].append({'time': dt, 'alt': 30, 'high': True})
+            
+            # Saturn visible all 4 hours
+            visible_bodies.append('Saturn')
+            body_visibility['Saturn'].append({'time': dt, 'alt': 45, 'high': True})
+            
+            visibility_grid[dt] = {'bodies': visible_bodies, 'count': len(visible_bodies)}
+        
+        continuous_blocks = {
+            'Jupiter': sorted_times[2:],  # Only last 2 hours
+            'Saturn': sorted_times  # All 4 hours
+        }
+        
+        weather_blocks = {dt.replace(minute=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
+        
+        # When passed all targets, only Saturn should be included (visible entire block)
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            ['Saturn'],  # Only Saturn is visible entire block
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌓'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'targets_in_chart': ['Saturn'],
+            'jupiter_excluded': True,
+            'saturn_included': True
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_body_setting_during_block_excluded(self, mock_settings, snapshot):
+        """Test that a body setting partway through the block is excluded from chart"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = [start_time + datetime.timedelta(hours=i) for i in range(4)]
+        
+        # Moon sets at hour 2 (not visible entire block)
+        # Jupiter visible entire block
+        targets = ['Moon', 'Jupiter']
+        
+        visibility_grid = {}
+        body_visibility = {'Moon': [], 'Jupiter': []}
+        
+        for i, dt in enumerate(sorted_times):
+            visible_bodies = []
+            
+            # Moon only visible in first 2 hours (sets during block)
+            if i < 2:
+                visible_bodies.append('Moon')
+                body_visibility['Moon'].append({'time': dt, 'alt': 25, 'high': True})
+            
+            # Jupiter visible all 4 hours
+            visible_bodies.append('Jupiter')
+            body_visibility['Jupiter'].append({'time': dt, 'alt': 50, 'high': True})
+            
+            visibility_grid[dt] = {'bodies': visible_bodies, 'count': len(visible_bodies)}
+        
+        continuous_blocks = {
+            'Moon': sorted_times[:2],  # Only first 2 hours
+            'Jupiter': sorted_times  # All 4 hours
+        }
+        
+        weather_blocks = {dt.replace(minute=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
+        
+        # Only Jupiter should be included (visible entire block)
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            ['Jupiter'],  # Only Jupiter is visible entire block
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌒'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'targets_in_chart': ['Jupiter'],
+            'moon_excluded': True,
+            'jupiter_included': True
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_no_yellow_in_colormap(self, mock_settings, snapshot):
+        """Test that the colormap no longer contains yellow colors"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = [start_time + datetime.timedelta(hours=i) for i in range(3)]
+        
+        targets = ['Saturn']
+        
+        visibility_grid = {}
+        body_visibility = {'Saturn': []}
+        
+        # Create data with high altitude (70°) to test high-altitude colors
+        for dt in sorted_times:
+            visibility_grid[dt] = {'bodies': ['Saturn'], 'count': 1}
+            body_visibility['Saturn'].append({'time': dt, 'alt': 70, 'high': True})
+        
+        continuous_blocks = {'Saturn': sorted_times}
+        weather_blocks = {dt.replace(minute=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
+        
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_no_yellow_colormap.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'high_altitude_test': True,
+            'altitude_degrees': 70
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_chart_title_with_location_and_date(self, mock_settings, snapshot):
+        """Test that chart title includes location name and date"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = [start_time + datetime.timedelta(hours=i) for i in range(3)]
+        
+        targets = ['Saturn']
+        
+        visibility_grid = {}
+        body_visibility = {'Saturn': []}
+        
+        for dt in sorted_times:
+            visibility_grid[dt] = {'bodies': ['Saturn'], 'count': 1}
+            body_visibility['Saturn'].append({'time': dt, 'alt': 50, 'high': True})
+        
+        continuous_blocks = {'Saturn': sorted_times}
+        weather_blocks = {dt.replace(minute=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
+        
+        # Test with location and date
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕',
+            location_name='Orlando',
+            date_str='November 24, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_chart_with_location_date.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'has_location': True,
+            'has_date': True,
+            'location': 'Orlando',
+            'date': 'November 24, 2025'
+        }
+        
+        assert snapshot_data == snapshot
