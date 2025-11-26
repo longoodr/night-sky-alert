@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import random
 import datetime
 import requests
 from skyfield.api import load, Topos, wgs84
@@ -387,7 +388,8 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     ]
     
     from matplotlib.colors import LinearSegmentedColormap
-    cmap = LinearSegmentedColormap.from_list('altitude', colors_list)
+    # Increase N to 2048 to prevent color banding/quantization artifacts
+    cmap = LinearSegmentedColormap.from_list('altitude', colors_list, N=16384)
     
     # Normalize: -1 to 90 degrees mapped to 0-1 colormap range
     # Values < 0 (not visible) → 0 (black)
@@ -407,16 +409,54 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     # Use 60 to ensure integer pixels per minute (60/15 = 4)
     upsample_factor = 60
     upsampled_matrix = []
+
+    def catmull_rom(p0, p1, p2, p3, t):
+        return 0.5 * (
+            (2 * p1) +
+            (-p0 + p2) * t +
+            (2 * p0 - 5 * p1 + 4 * p2 - p3) * t**2 +
+            (-p0 + 3 * p1 - 3 * p2 + p3) * t**3
+        )
+
     for row in normalized_matrix:
         new_row = []
-        for i in range(len(row) - 1):
-            start_val = row[i]
-            end_val = row[i+1]
-            # Linear interpolation
-            steps = [start_val + (end_val - start_val) * (j / upsample_factor) for j in range(upsample_factor)]
+        n = len(row)
+        for i in range(n - 1):
+            p1 = row[i]
+            p2 = row[i+1]
+            
+            # Handle boundaries with linear extrapolation
+            if i > 0:
+                p0 = row[i-1]
+            else:
+                p0 = 2 * p1 - p2
+                
+            if i < n - 2:
+                p3 = row[i+2]
+            else:
+                p3 = 2 * p2 - p1
+            
+            # Cubic interpolation
+            steps = []
+            for j in range(upsample_factor):
+                t = j / upsample_factor
+                val = catmull_rom(p0, p1, p2, p3, t)
+                val = max(0.0, min(1.0, val)) # Clamp
+                steps.append(val)
             new_row.extend(steps)
-        new_row.append(row[-1]) # Append last value
+            
+        if n > 0:
+            new_row.append(row[-1]) # Append last value
         upsampled_matrix.append(new_row)
+
+    # Apply dithering to prevent color banding
+    # Add small random noise to break up quantization steps
+    noise_mag = 4 / cmap.N
+    for r in range(len(upsampled_matrix)):
+        for c in range(len(upsampled_matrix[r])):
+            noise = (random.random() - 0.5) * noise_mag
+            val = upsampled_matrix[r][c] + noise
+            upsampled_matrix[r][c] = max(0.0, min(1.0, val))
     
     # Time labels - show at 30-minute intervals aligned to the hour/half-hour
     # Calculate time interval (assuming constant)
@@ -450,17 +490,20 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     pad_right_minutes = (aligned_end - end_time).total_seconds() / 60
     pad_right_pixels = int(round(pad_right_minutes * pixels_per_minute))
     
+    # Add extra visual padding so dots at the edges aren't cut off
+    visual_padding_pixels = 6
+    
     # Pad the matrix
     padded_matrix = []
     for row in upsampled_matrix:
         # Pad left with first value
-        left_padding = [row[0]] * pad_left_pixels
+        left_padding = [row[0]] * (pad_left_pixels + visual_padding_pixels)
         # Pad right with last value
-        right_padding = [row[-1]] * pad_right_pixels
+        right_padding = [row[-1]] * (pad_right_pixels + visual_padding_pixels)
         padded_matrix.append(left_padding + row + right_padding)
     
     # Use 'none' interpolation to prevent vertical bleeding between bodies
-    # Horizontal smoothness is achieved by upsampling
+    # Horizontal smoothness is achieved by upsampling and dithering
     im = ax.imshow(padded_matrix, cmap=cmap, aspect='auto', interpolation='none', vmin=0, vmax=1)
     
     # Add colorbar showing altitude scale
@@ -480,6 +523,27 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
             y_labels.append(target)
     ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold')
     
+    # Left align y-axis labels using exact width calculation
+    # We need to draw the canvas to get the text extents
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    
+    max_width = 0
+    for label in ax.get_yticklabels():
+        # Get bounding box in display coordinates
+        bbox = label.get_window_extent(renderer)
+        # Transform to axes coordinates
+        bbox_axes = bbox.transformed(ax.transAxes.inverted())
+        max_width = max(max_width, bbox_axes.width)
+        
+    # Position labels so the longest one ends just left of the axis (with padding)
+    padding = 0
+    x_offset = -(max_width + padding)
+    
+    for label in ax.get_yticklabels():
+        label.set_horizontalalignment('left')
+        label.set_x(x_offset)
+    
     # Generate ticks based on aligned times
     current_tick = aligned_start
     tick_positions = []
@@ -488,8 +552,9 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     while current_tick <= aligned_end:
         # Calculate position relative to aligned start
-        # Since we padded the matrix, index 0 corresponds to aligned_start
-        pos = (current_tick - aligned_start).total_seconds() / 60 * pixels_per_minute
+        # Since we padded the matrix, index 0 corresponds to aligned_start MINUS visual_padding_pixels
+        # So aligned_start is at index visual_padding_pixels
+        pos = (current_tick - aligned_start).total_seconds() / 60 * pixels_per_minute + visual_padding_pixels
         
         tick_positions.append(pos)
         tick_labels.append(current_tick.strftime('%I:%M %p'))
@@ -512,6 +577,32 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         ax.get_xticklabels()[i].set_color(color)
         if color == 'red':
             ax.get_xticklabels()[i].set_weight('bold')
+
+    # Add altitude dots at tick marks
+    # Since imshow origin is 'upper' (default), y increases downwards.
+    # Row i is centered at y=i. Top is i-0.5, Bottom is i+0.5.
+    # We want high altitude to be visually 'up' (lower y value).
+    for x_pos in tick_positions:
+        col_idx = int(round(x_pos))
+        if 0 <= col_idx < len(padded_matrix[0]):
+            for body_idx in range(num_bodies):
+                val = padded_matrix[body_idx][col_idx]
+                if val > 0: # Visible
+                    # val is 0.01 + (alt/90)*0.99
+                    norm_alt = (val - 0.01) / 0.99
+                    
+                    # Map to y-position within the body's row
+                    # Controls the empty space at the top and bottom of the bar where dots won't be drawn
+                    dot_vertical_padding = 0.02
+                    
+                    # Calculate drawing range within the row (centered at body_idx)
+                    # Row extends from body_idx-0.5 to body_idx+0.5
+                    bottom_limit = body_idx + 0.5 - dot_vertical_padding
+                    draw_height = 1.0 - (2 * dot_vertical_padding)
+                    
+                    y_pos = bottom_limit - (norm_alt * draw_height)
+                    
+                    ax.plot(x_pos, y_pos, 'o', color='white', markeredgecolor='black', markeredgewidth=0.5, markersize=4)
     
     # Grid - horizontal only to separate bodies, no vertical lines
     ax.set_yticks([y - 0.5 for y in range(1, num_bodies)], minor=True)
