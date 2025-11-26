@@ -262,7 +262,7 @@ def get_location_name(lat, lon):
         return location
     except Exception as e:
         print(f"Warning: Could not fetch location name: {e}")
-        return f"{lat:.2f}, {lon:.2f}"  # Fallback to coordinates
+        return None
 
 def get_weather_forecast(lat, lon):
     # Using Open-Meteo API (Free, no key required for basic usage)
@@ -322,7 +322,36 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         location_name: Optional location name for chart title
         date_str: Optional date string for chart title
     """
-    fig, ax = plt.subplots(figsize=(14, 7))
+    # Dynamic height based on number of bodies
+    # We use a larger minimum height to prevent the chart from looking squished,
+    # but we'll manually position the axes to keep the bars at their original size.
+    BODY_HEIGHT_INCH = 0.8
+    BASE_HEIGHT_INCH = 2.0
+    MIN_FIG_HEIGHT = 4.0
+    
+    needed_body_height = len(targets) * BODY_HEIGHT_INCH
+    chart_height = max(MIN_FIG_HEIGHT, BASE_HEIGHT_INCH + needed_body_height)
+    
+    fig = plt.figure(figsize=(14, chart_height))
+    
+    # Calculate normalized coordinates for the plot axes
+    # We want the plot to be exactly 'needed_body_height' inches tall
+    plot_height_norm = needed_body_height / chart_height
+    
+    # Center the plot vertically
+    # But shift slightly down to account for title being at the top
+    # Available space is roughly centered, but let's just center it in the figure
+    plot_bottom_norm = (1.0 - plot_height_norm) / 2
+    
+    # Define axes positions [left, bottom, width, height]
+    # Main plot: 10% left margin, 75% width
+    ax = fig.add_axes([0.1, plot_bottom_norm, 0.75, plot_height_norm])
+    
+    # Colorbar: To the right, tall (elongated scale)
+    # Let's make it 80% of the figure height, centered
+    cbar_height_norm = 0.8
+    cbar_bottom_norm = (1.0 - cbar_height_norm) / 2
+    cax = fig.add_axes([0.87, cbar_bottom_norm, 0.02, cbar_height_norm])
     
     # Create a matrix for the heatmap
     num_bodies = len(targets)
@@ -374,15 +403,72 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
                 normalized_row.append(0.01 + (val / 90.0) * 0.99)
         normalized_matrix.append(normalized_row)
     
+    # Upsample horizontally for smooth transition
+    # Use 60 to ensure integer pixels per minute (60/15 = 4)
+    upsample_factor = 60
+    upsampled_matrix = []
+    for row in normalized_matrix:
+        new_row = []
+        for i in range(len(row) - 1):
+            start_val = row[i]
+            end_val = row[i+1]
+            # Linear interpolation
+            steps = [start_val + (end_val - start_val) * (j / upsample_factor) for j in range(upsample_factor)]
+            new_row.extend(steps)
+        new_row.append(row[-1]) # Append last value
+        upsampled_matrix.append(new_row)
+    
+    # Time labels - show at 30-minute intervals aligned to the hour/half-hour
+    # Calculate time interval (assuming constant)
+    if len(sorted_times) > 1:
+        interval_minutes = (sorted_times[1] - sorted_times[0]).total_seconds() / 60
+    else:
+        interval_minutes = 15 # Default fallback
+
+    start_time = sorted_times[0]
+    end_time = sorted_times[-1]
+    
+    # Calculate aligned start/end times for padding
+    aligned_start = start_time.replace(second=0, microsecond=0)
+    if aligned_start.minute >= 30:
+        aligned_start = aligned_start.replace(minute=30)
+    else:
+        aligned_start = aligned_start.replace(minute=0)
+        
+    aligned_end = end_time.replace(second=0, microsecond=0)
+    if aligned_end.minute > 30:
+        aligned_end = aligned_end.replace(minute=0) + datetime.timedelta(hours=1)
+    elif aligned_end.minute > 0:
+        aligned_end = aligned_end.replace(minute=30)
+    
+    # Calculate padding pixels
+    pixels_per_minute = upsample_factor / interval_minutes
+    
+    pad_left_minutes = (start_time - aligned_start).total_seconds() / 60
+    pad_left_pixels = int(round(pad_left_minutes * pixels_per_minute))
+    
+    pad_right_minutes = (aligned_end - end_time).total_seconds() / 60
+    pad_right_pixels = int(round(pad_right_minutes * pixels_per_minute))
+    
+    # Pad the matrix
+    padded_matrix = []
+    for row in upsampled_matrix:
+        # Pad left with first value
+        left_padding = [row[0]] * pad_left_pixels
+        # Pad right with last value
+        right_padding = [row[-1]] * pad_right_pixels
+        padded_matrix.append(left_padding + row + right_padding)
+    
     # Use 'none' interpolation to prevent vertical bleeding between bodies
-    # Each body row is completely independent
-    im = ax.imshow(normalized_matrix, cmap=cmap, aspect='auto', interpolation='none', vmin=0, vmax=1)
+    # Horizontal smoothness is achieved by upsampling
+    im = ax.imshow(padded_matrix, cmap=cmap, aspect='auto', interpolation='none', vmin=0, vmax=1)
     
     # Add colorbar showing altitude scale
-    cbar = plt.colorbar(im, ax=ax, pad=0.02)
+    # Use the dedicated colorbar axes
+    cbar = plt.colorbar(im, cax=cax)
     cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11)
     cbar.set_ticks([0, 0.17, 0.34, 0.51, 0.68, 0.84, 1.0])
-    cbar.set_ticklabels(['Not Visible', '15°', '30°', '45°', '60°', '75°', '90°'])
+    cbar.set_ticklabels(['≤0°', '15°', '30°', '45°', '60°', '75°', '90°'])
     
     # Set ticks and labels - add moon emoji to Moon label
     ax.set_yticks(range(num_bodies))
@@ -394,28 +480,38 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
             y_labels.append(target)
     ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold')
     
-    # Time labels - show at 30-minute intervals (minute == 0 or minute == 30)
-    time_indices = []
-    for i, dt in enumerate(sorted_times):
-        if dt.minute == 0 or dt.minute == 30:
-            time_indices.append(i)
+    # Generate ticks based on aligned times
+    current_tick = aligned_start
+    tick_positions = []
+    tick_labels = []
+    tick_colors = []
     
-    # If no 30-min marks found (very short timespan), fall back to showing all
-    if not time_indices:
-        time_indices = list(range(0, num_times, max(1, num_times // 8)))
-    
-    time_labels = [sorted_times[i].strftime('%I:%M %p') for i in time_indices]
-    ax.set_xticks(time_indices)
-    ax.set_xticklabels(time_labels, rotation=45, ha='right', fontsize=9)
-    
-    # Color bad weather time labels in red
-    if weather_blocks:
-        for idx, tick_idx in enumerate(time_indices):
-            dt = sorted_times[tick_idx]
-            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+    while current_tick <= aligned_end:
+        # Calculate position relative to aligned start
+        # Since we padded the matrix, index 0 corresponds to aligned_start
+        pos = (current_tick - aligned_start).total_seconds() / 60 * pixels_per_minute
+        
+        tick_positions.append(pos)
+        tick_labels.append(current_tick.strftime('%I:%M %p'))
+        
+        # Check weather for this tick
+        color = 'black'
+        if weather_blocks:
+            nearest_hour = current_tick.replace(minute=0, second=0, microsecond=0)
             if nearest_hour in weather_blocks and not weather_blocks[nearest_hour]['good']:
-                ax.get_xticklabels()[idx].set_color('red')
-                ax.get_xticklabels()[idx].set_weight('bold')
+                color = 'red'
+        tick_colors.append(color)
+        
+        current_tick += datetime.timedelta(minutes=30)
+        
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
+    
+    # Apply colors
+    for i, color in enumerate(tick_colors):
+        ax.get_xticklabels()[i].set_color(color)
+        if color == 'red':
+            ax.get_xticklabels()[i].set_weight('bold')
     
     # Grid - horizontal only to separate bodies, no vertical lines
     ax.set_yticks([y - 0.5 for y in range(1, num_bodies)], minor=True)
@@ -423,26 +519,36 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     # Title with location and date
     if location_name and date_str:
-        title_text = f'Visibility: {location_name} | {date_str}'
+        title_text = f'Visibility Report: {location_name} | {date_str}'
     elif location_name:
-        title_text = f'Visibility: {location_name}'
+        title_text = f'Visibility Report: {location_name}'
     elif date_str:
-        title_text = f'Visibility {date_str}'
+        title_text = f'Visibility Report: {date_str}'
     else:
-        title_text = 'Visibility'
+        title_text = 'Visibility Report'
     
-    ax.set_title(title_text, fontsize=16, fontweight='bold', pad=20)
-    ax.set_xlabel('Time', fontsize=12, fontweight='bold')
+    # Use suptitle to keep title at the top of the figure, independent of the plot axis
+    # Align title with the plot center (0.475) to match the Time label
+    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885)
+    
+    # Calculate Y position for labels (Time and Warning)
+    # Place them approx 0.95 inches below the plot area to clear rotated tick labels
+    label_y_inch = 0.95
+    label_y_pos = max(0.02, plot_bottom_norm - (label_y_inch / chart_height))
+    
+    # Add Time label manually to align with warning text
+    # Plot is from 0.1 to 0.85 (width 0.75), so center is 0.475
+    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold')
     
     # Add note about red time labels (bottom right corner)
     if weather_blocks:
         has_bad_weather = any(not wb['good'] for wb in weather_blocks.values())
         if has_bad_weather:
-            fig.text(0.99, 0.02, 'Red times indicate poor visibility conditions', 
-                    ha='right', va='bottom', fontsize=9, style='italic', color='red',
-                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='red', alpha=0.8))
+            # Position in line with Time label, aligned with right edge of plot (0.85)
+            fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions', 
+                    ha='right', va='bottom', fontsize=9, style='italic', color='red')
     
-    plt.tight_layout()
+    # plt.tight_layout() # Removed as it conflicts with add_axes
     
     # Save to bytes buffer
     buf = io.BytesIO()

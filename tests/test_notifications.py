@@ -655,3 +655,112 @@ class TestBodyFiltering:
         }
         
         assert snapshot_data == snapshot
+    
+    def test_non_aligned_time_window(self, mock_settings, snapshot):
+        """Test chart generation with start time not aligned to hour/half-hour"""
+        from main import create_visibility_chart
+
+        eastern = pytz.timezone('America/New_York')
+        # Start at 17:12 (non-aligned)
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 17, 12))
+        # 2 hours of data
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(8)]
+
+        targets = ['Mars']
+        visibility_grid = {}
+        body_visibility = {'Mars': []}
+
+        for dt in sorted_times:
+            visibility_grid[dt] = {'bodies': ['Mars'], 'count': 1}
+            body_visibility['Mars'].append({'time': dt, 'alt': 45, 'high': True})
+
+        continuous_blocks = {'Mars': sorted_times}
+        weather_blocks = {dt.replace(minute=0, second=0, microsecond=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
+        
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕'
+        )
+
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_non_aligned_time.png', 'wb') as f:
+            f.write(image_bytes)
+
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'start_time': start_time.strftime('%I:%M %p'),
+            'first_tick_expected_after_start': True
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_single_body_poor_visibility(self, mock_settings, snapshot):
+        """Test chart generation with single body (elongated scale) and poor visibility warning"""
+        from main import create_visibility_chart
+
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(12)] # 3 hours
+
+        targets = ['Mars']
+        visibility_grid = {}
+        body_visibility = {'Mars': []}
+
+        for dt in sorted_times:
+            visibility_grid[dt] = {'bodies': ['Mars'], 'count': 1}
+            body_visibility['Mars'].append({'time': dt, 'alt': 45, 'high': True})
+
+        continuous_blocks = {'Mars': sorted_times}
+        
+        # Create weather blocks with some bad weather to trigger warning
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            # Make the middle hour bad
+            is_bad = nearest_hour.hour == 21
+            weather_blocks[nearest_hour] = {
+                'cloud': 100 if is_bad else 0, 
+                'precip': 50 if is_bad else 0, 
+                'good': not is_bad
+            }
+            
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕'
+        )
+
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_single_body_poor_visibility.png', 'wb') as f:
+            f.write(image_bytes)
+
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'has_warning': True,
+            'targets': targets
+        }
+        
+        assert snapshot_data == snapshot
