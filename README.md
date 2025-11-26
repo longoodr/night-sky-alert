@@ -34,8 +34,15 @@ This repository is designed to run automatically via GitHub Actions, sending you
 
 ### Find Your Coordinates
 
+You have two options for specifying your location:
+
+**Option 1: Use a Location Name (Recommended)**
+- Simply use a location name like `New York City, New York` or `London, UK`
+- The script will automatically look up the coordinates using OpenStreetMap
+
+**Option 2: Use Exact Coordinates**
 1. Go to [Google Maps](https://www.google.com/maps) and right-click your location
-2. Click the coordinates to copy them (e.g., `28.661111, -81.365619`)
+2. Click the coordinates to copy them (e.g., `40.7128, -74.0060`)
 3. The first number is your **latitude**, the second is your **longitude**
 
 ### Configure GitHub Secrets
@@ -47,10 +54,13 @@ In your forked repository:
 
 | Secret Name | Description | Example |
 |-------------|-------------|---------|
-| `LATITUDE` | Your location latitude | `28.661111` |
-| `LONGITUDE` | Your location longitude | `-81.365619` |
+| `LOCATION` | Your location name (use this OR lat/lon) | `New York City, New York` |
+| `LATITUDE` | Your location latitude (if not using LOCATION) | `40.7128` |
+| `LONGITUDE` | Your location longitude (if not using LOCATION) | `-74.0060` |
 | `PUSHOVER_USER_KEY` | Your Pushover User Key | `u9od2nfn3n5m4zc...` |
 | `PUSHOVER_API_TOKEN` | Your Pushover Application API Token | `awzwdb3wu4juxx7...` |
+
+> **Note:** You must provide either `LOCATION` OR both `LATITUDE` and `LONGITUDE`. If you provide `LOCATION`, coordinates will be looked up automatically and the location name will be displayed in your charts.
 
 ### (Optional) Configure Variables
 
@@ -102,7 +112,7 @@ The workflow runs daily at 2:00 PM UTC by default. To change this:
 ### GitHub Actions Configuration Details
 
 **Environment variables used by the script:**
-- **Required** (from Secrets): `LATITUDE`, `LONGITUDE`, `PUSHOVER_USER_KEY`, `PUSHOVER_API_TOKEN`
+- **Required** (from Secrets): Either `LOCATION` OR both `LATITUDE` and `LONGITUDE`, plus `PUSHOVER_USER_KEY`, `PUSHOVER_API_TOKEN`
 - **Optional** (from Variables or defaults): `CLOUD_COVER_LIMIT`, `PRECIP_PROB_LIMIT`, `START_TIME`, `END_TIME`, `MIN_VIEWING_HOURS`, `MIN_MOON_ILLUMINATION`, `MAX_MOON_ILLUMINATION`, `CHECK_INTERVAL_MINUTES`
 
 ## Local Development

@@ -9,7 +9,7 @@ from skyfield.api import load, Topos, wgs84
 from skyfield import almanac
 import pytz
 from pydantic_settings import BaseSettings
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from typing import Optional
 import base64
 import io
@@ -55,10 +55,72 @@ class ChartColors:
     GRID = ALT_ZENITH
 
 
+def geocode_location(location_query: str) -> tuple[float, float, str]:
+    """
+    Geocode a location name to coordinates using OpenStreetMap Nominatim API.
+    
+    Args:
+        location_query: Location string (e.g., "Orlando, Florida")
+        
+    Returns:
+        tuple: (latitude, longitude, display_name)
+        
+    Raises:
+        ValueError: If location cannot be found or API fails
+    """
+    try:
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": location_query,
+            "format": "json",
+            "limit": 1,
+            "addressdetails": 1
+        }
+        headers = {
+            "User-Agent": "NightSkyAlert/1.0"  # Required by Nominatim
+        }
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if not data:
+            raise ValueError(f"Location not found: '{location_query}'")
+        
+        result = data[0]
+        lat = float(result['lat'])
+        lon = float(result['lon'])
+        
+        # Build a clean display name from address details
+        address = result.get('address', {})
+        display_name = (
+            address.get('city') or 
+            address.get('town') or 
+            address.get('village') or 
+            address.get('county') or
+            result.get('display_name', location_query).split(',')[0]
+        )
+        
+        # Add state/country for clarity if available
+        state = address.get('state')
+        country = address.get('country')
+        if state and state != display_name:
+            display_name = f"{display_name}, {state}"
+        elif country and country != display_name:
+            display_name = f"{display_name}, {country}"
+            
+        return lat, lon, display_name
+        
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Failed to geocode location '{location_query}': Network error - {e}")
+    except (KeyError, IndexError, ValueError) as e:
+        raise ValueError(f"Failed to geocode location '{location_query}': {e}")
+
 
 class Settings(BaseSettings):
-    latitude: float = Field(..., description="Latitude of the location")
-    longitude: float = Field(..., description="Longitude of the location")
+    location: Optional[str] = Field(None, description="Location name to geocode (e.g., 'Orlando, Florida')")
+    latitude: Optional[float] = Field(None, description="Latitude of the location")
+    longitude: Optional[float] = Field(None, description="Longitude of the location")
+    location_name: Optional[str] = Field(None, description="Resolved location name for display")
     cloud_cover_limit: float = Field(15.0, description="Max cloud cover percentage")
     precip_prob_limit: float = Field(5.0, description="Max precipitation probability percentage")
     min_viewing_hours: float = Field(1.0, ge=0.5, description="Minimum continuous viewing hours required")
@@ -69,6 +131,14 @@ class Settings(BaseSettings):
     pushover_api_token: Optional[str] = Field(None, description="Pushover API Token")
     start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
     end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
+
+    @field_validator('location', mode='before')
+    @classmethod
+    def validate_location(cls, v):
+        """Convert empty strings to None for location"""
+        if v == '' or v is None:
+            return None
+        return v
 
     @field_validator('cloud_cover_limit', mode='before')
     @classmethod
@@ -135,6 +205,31 @@ class Settings(BaseSettings):
         except ValueError as e:
             raise ValueError(f"Invalid time format: {e}")
         return v
+
+    @model_validator(mode='after')
+    def validate_location_or_coordinates(self):
+        """Validate that either location OR (latitude AND longitude) is provided, and geocode if needed."""
+        has_location = self.location is not None and self.location.strip() != ''
+        has_coords = self.latitude is not None and self.longitude is not None
+        
+        if not has_location and not has_coords:
+            raise ValueError(
+                "Either 'location' OR both 'latitude' and 'longitude' must be provided. "
+                "Set LOCATION='Orlando, Florida' or set LATITUDE and LONGITUDE."
+            )
+        
+        if has_location:
+            # Geocode the location to get coordinates
+            try:
+                lat, lon, display_name = geocode_location(self.location)
+                object.__setattr__(self, 'latitude', lat)
+                object.__setattr__(self, 'longitude', lon)
+                object.__setattr__(self, 'location_name', display_name)
+                print(f"Geocoded '{self.location}' -> {display_name} ({lat:.4f}, {lon:.4f})")
+            except ValueError as e:
+                raise ValueError(str(e))
+        
+        return self
 
     class Config:
         env_file = ".env"
@@ -924,10 +1019,14 @@ def main():
     print(f"\n--- Configuration ---")
     print(f"Location: {settings.latitude}, {settings.longitude}")
     
-    # Get location name from coordinates
-    print(f"\n--- Reverse Geocoding ---")
-    location_name = get_location_name(settings.latitude, settings.longitude)
-    print(f"Location: {location_name}")
+    # Get location name - use geocoded name if available, otherwise reverse geocode
+    if settings.location_name:
+        location_name = settings.location_name
+        print(f"Location Name: {location_name} (from geocoding)")
+    else:
+        print(f"\n--- Reverse Geocoding ---")
+        location_name = get_location_name(settings.latitude, settings.longitude)
+        print(f"Location: {location_name}")
     
     print(f"Min viewing hours: {settings.min_viewing_hours}")
     print(f"Cloud cover limit: {settings.cloud_cover_limit}%")
