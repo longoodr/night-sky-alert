@@ -1,5 +1,6 @@
 # Night Sky Alert
 
+![Example Visibility Chart](assets/visibility_chart_example.png)
 This project checks the weather forecast for your location daily and alerts you via Pushover if viewing conditions are good that night for solar system bodies (Moon, Mars, Jupiter, Saturn).
 
 ## Features

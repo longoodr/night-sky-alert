@@ -1150,3 +1150,149 @@ class TestFloodFillAndPartialVisibility:
         }
         
         assert snapshot_data == snapshot
+
+    def test_readme_showcase_chart(self, mock_settings, snapshot):
+        """Generate a showcase chart suitable for embedding in the README.
+        
+        Uses real astronomical data for Seattle, WA on December 1, 2025:
+        - Moon: High early (57°), descending through the night to 7°
+        - Jupiter: Rising from 5° to 64° - beautiful rise arc
+        - Saturn: Setting from 38° to below horizon
+        - Moon phase: Waxing Gibbous 🌔 (77% illumination)
+        
+        This creates a visually varied chart showing bodies at different
+        altitudes, with some rising and some setting.
+        """
+        from main import create_visibility_chart
+        
+        pacific = pytz.timezone('America/Los_Angeles')
+        
+        # Real astronomical data for Seattle, WA on December 1, 2025
+        # 10-hour window: 6 PM to 4 AM (41 slots at 15-min intervals)
+        start_time = pacific.localize(datetime.datetime(2025, 12, 1, 18, 0))
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(41)]
+        
+        # Real altitude data computed from Skyfield ephemeris (de421.bsp)
+        # Format: (hour_offset, moon_alt, jupiter_alt, saturn_alt)
+        # Data points at each hour from 6 PM to 4 AM
+        real_data = {
+            0: (38.3, None, 36.0),    # 6:00 PM
+            1: (46.8, None, 38.3),    # 7:00 PM
+            2: (53.5, 4.6, 37.2),     # 8:00 PM
+            3: (57.0, 14.0, 33.0),    # 9:00 PM
+            4: (56.2, 24.0, 26.3),    # 10:00 PM
+            5: (51.4, 34.1, 18.0),    # 11:00 PM
+            6: (43.9, 44.0, 8.6),     # 12:00 AM
+            7: (35.1, 53.2, None),    # 1:00 AM
+            8: (25.6, 60.3, None),    # 2:00 AM
+            9: (16.0, 63.7, None),    # 3:00 AM
+            10: (6.6, 61.8, None),    # 4:00 AM
+        }
+        
+        def interpolate_alt(slot_idx, body_idx):
+            """Interpolate altitude for 15-min slots between hourly data points."""
+            hour = slot_idx // 4
+            frac = (slot_idx % 4) / 4.0
+            
+            if hour >= 10:
+                return real_data[10][body_idx]
+            
+            alt1 = real_data[hour][body_idx]
+            alt2 = real_data[hour + 1][body_idx]
+            
+            if alt1 is None and alt2 is None:
+                return None
+            elif alt1 is None:
+                # Body is rising
+                if frac > 0.5:
+                    return alt2 * (frac - 0.5) * 2
+                return None
+            elif alt2 is None:
+                # Body is setting
+                if frac < 0.5:
+                    return alt1 * (1 - frac * 2)
+                return None
+            else:
+                return alt1 + (alt2 - alt1) * frac
+        
+        targets = ['Jupiter', 'Moon', 'Saturn']  # Order for chart display
+        visibility_grid = {}
+        body_visibility = {name: [] for name in targets}
+        
+        for i, dt in enumerate(sorted_times):
+            visible_bodies = []
+            
+            # Moon (index 0 in real_data tuple)
+            moon_alt = interpolate_alt(i, 0)
+            if moon_alt is not None and moon_alt > 0:
+                visible_bodies.append('Moon')
+                body_visibility['Moon'].append({
+                    'time': dt, 'alt': moon_alt, 'high': moon_alt >= 15
+                })
+            
+            # Jupiter (index 1 in real_data tuple)
+            jupiter_alt = interpolate_alt(i, 1)
+            if jupiter_alt is not None and jupiter_alt > 0:
+                visible_bodies.append('Jupiter')
+                body_visibility['Jupiter'].append({
+                    'time': dt, 'alt': jupiter_alt, 'high': jupiter_alt >= 15
+                })
+            
+            # Saturn (index 2 in real_data tuple)
+            saturn_alt = interpolate_alt(i, 2)
+            if saturn_alt is not None and saturn_alt > 0:
+                visible_bodies.append('Saturn')
+                body_visibility['Saturn'].append({
+                    'time': dt, 'alt': saturn_alt, 'high': saturn_alt >= 15
+                })
+            
+            visibility_grid[dt] = {'bodies': visible_bodies, 'count': len(visible_bodies)}
+        
+        # All visible bodies meet requirements
+        continuous_blocks = {
+            'Jupiter': [v['time'] for v in body_visibility['Jupiter']],
+            'Moon': [v['time'] for v in body_visibility['Moon']],
+            'Saturn': [v['time'] for v in body_visibility['Saturn']]
+        }
+        
+        # Perfect weather throughout
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            weather_blocks[nearest_hour] = {'cloud': 5, 'precip': 0, 'good': True}
+        
+        # Get aligned chart times
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
+        
+        image_data = create_visibility_chart(
+            chart_slots,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌔',  # Waxing Gibbous (77% illumination)
+            location_name='Seattle, WA',
+            date_str='December 1, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save as the README showcase image
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'readme_showcase_chart.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'targets': targets,
+            'time_range': f"{sorted_times[0].strftime('%I:%M %p')} - {sorted_times[-1].strftime('%I:%M %p')}",
+            'location': 'Seattle, WA'
+        }
+        
+        assert snapshot_data == snapshot

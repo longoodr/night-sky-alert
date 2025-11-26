@@ -136,6 +136,19 @@
     'total_slots': 16,
   })
 # ---
+# name: TestFloodFillAndPartialVisibility.test_readme_showcase_chart
+  dict({
+    'image_hash': '7bb42d96fdb86c055cdba10ae5e0e42d6cb91174e3a8cf4c27db38d8e9d41ed0',
+    'image_size_bytes': 236767,
+    'location': 'Seattle, WA',
+    'targets': list([
+      'Jupiter',
+      'Moon',
+      'Saturn',
+    ]),
+    'time_range': '06:00 PM - 04:00 AM',
+  })
+# ---
 # name: TestNotificationScenarios.test_ascii_chart_generation
   '''
   Time      Moon     Mars     Jupiter  Saturn  
