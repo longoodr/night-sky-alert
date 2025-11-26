@@ -74,7 +74,8 @@ def geocode_location(location_query: str) -> tuple[float, float, str]:
             "q": location_query,
             "format": "json",
             "limit": 1,
-            "addressdetails": 1
+            "addressdetails": 1,
+            "accept-language": "en"
         }
         headers = {
             "User-Agent": "NightSkyAlert/1.0"  # Required by Nominatim
@@ -323,13 +324,15 @@ def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_
         end_time_str: Optional custom end time in "HH:MM" format
         
     Returns:
-        tuple: (start_dt, end_dt) - Both timezone-aware datetimes
+        tuple: (search_start, search_end, astro_sunset, astro_sunrise)
+            - search_start/end: The window to search for good conditions (may be custom)
+            - astro_sunset/sunrise: Hard astronomical limits for flood-fill expansion
         
     Logic:
         - If currently in darkness (after sunset, before sunrise): use current night
         - Otherwise: use upcoming night (next sunset to following midnight/sunrise)
         - Default end time is midnight unless custom end_time specified
-        - Custom times override astronomical calculations
+        - Custom times override search window but not astronomical limits
     """
     ts = load.timescale()
     eph = load('de421.bsp')
@@ -356,8 +359,8 @@ def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_
             sunsets.append(dt)
     
     # Determine which night we're in or approaching
-    sunset_dt = None
-    sunrise_dt = None
+    astro_sunset = None
+    astro_sunrise = None
     
     # Find the most recent sunset before or at now
     past_sunsets = [s for s in sunsets if s <= now]
@@ -374,37 +377,41 @@ def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_
         if most_recent_sunset > most_recent_sunrise:
             # Sunset was more recent than sunrise = it's nighttime
             in_darkness = True
-            sunset_dt = most_recent_sunset
+            astro_sunset = most_recent_sunset
             if future_sunrises:
-                sunrise_dt = min(future_sunrises)
+                astro_sunrise = min(future_sunrises)
     elif past_sunsets and not past_sunrises:
         # Only sunsets in the past, no sunrise yet = still night from yesterday
         in_darkness = True
-        sunset_dt = max(past_sunsets)
+        astro_sunset = max(past_sunsets)
         if future_sunrises:
-            sunrise_dt = min(future_sunrises)
+            astro_sunrise = min(future_sunrises)
     
     # If we're not in darkness (daytime) or didn't find current night, use upcoming night
-    if sunset_dt is None:
+    if astro_sunset is None:
         if future_sunsets:
-            sunset_dt = min(future_sunsets)
+            astro_sunset = min(future_sunsets)
             # Find the sunrise after this sunset
-            sunrises_after_sunset = [s for s in sunrises if s > sunset_dt]
+            sunrises_after_sunset = [s for s in sunrises if s > astro_sunset]
             if sunrises_after_sunset:
-                sunrise_dt = min(sunrises_after_sunset)
+                astro_sunrise = min(sunrises_after_sunset)
     
     # Fallback if astronomical calculation fails
-    if not sunset_dt:
-        sunset_dt = now.replace(hour=18, minute=0, second=0, microsecond=0)
-    if not sunrise_dt:
-        sunrise_dt = (sunset_dt + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+    if not astro_sunset:
+        astro_sunset = now.replace(hour=18, minute=0, second=0, microsecond=0)
+    if not astro_sunrise:
+        astro_sunrise = (astro_sunset + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+
+    # Start with astronomical times as the search window
+    search_start = astro_sunset
+    search_end = astro_sunrise
 
     # Apply default end time of midnight if no custom end time specified
     if not end_time_str:
-        midnight = (sunset_dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        if midnight <= sunset_dt:
+        midnight = (astro_sunset + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        if midnight <= astro_sunset:
             midnight += datetime.timedelta(days=1)
-        sunrise_dt = midnight
+        search_end = midnight
 
     # Override with custom start time if provided
     if start_time_str:
@@ -413,13 +420,13 @@ def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_
         if h >= 12:  # Evening time
             # If it's already past this time today but we're in darkness, 
             # the sunset already happened
-            if start_candidate <= now and sunset_dt and sunset_dt <= now:
+            if start_candidate <= now and astro_sunset and astro_sunset <= now:
                 # Keep the astronomical sunset
                 pass
             else:
-                sunset_dt = start_candidate
+                search_start = start_candidate
         else:  # Morning time - unusual for start
-            sunset_dt = start_candidate
+            search_start = start_candidate
     
     # Override with custom end time if provided
     if end_time_str:
@@ -427,15 +434,19 @@ def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_
         end_candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
         
         # End time should be after start time
-        if end_candidate <= sunset_dt:
+        if end_candidate <= search_start:
             end_candidate += datetime.timedelta(days=1)
-        sunrise_dt = end_candidate
+        search_end = end_candidate
     
     # Final validation: ensure end is after start
-    if sunrise_dt <= sunset_dt:
-        sunrise_dt += datetime.timedelta(days=1)
+    if search_end <= search_start:
+        search_end += datetime.timedelta(days=1)
     
-    return sunset_dt, sunrise_dt
+    # Clamp search window to astronomical limits
+    search_start = max(search_start, astro_sunset)
+    search_end = min(search_end, astro_sunrise)
+    
+    return search_start, search_end, astro_sunset, astro_sunrise
 
 
 # Target Bodies
@@ -485,7 +496,8 @@ def get_location_name(lat, lon):
             "lat": lat,
             "lon": lon,
             "format": "json",
-            "zoom": 10  # City/town level
+            "zoom": 10,  # City/town level
+            "accept-language": "en"  # Request English names to avoid CJK character issues
         }
         headers = {
             "User-Agent": "NightSkyAlert/1.0"  # Required by Nominatim
@@ -683,20 +695,22 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     start_time = sorted_times[0]
     end_time = sorted_times[-1]
     
-    # Calculate aligned start/end times for padding
+    # Calculate aligned start/end times for tick labels
+    # Round start down to previous 30-min boundary
     aligned_start = start_time.replace(second=0, microsecond=0)
     if aligned_start.minute >= 30:
         aligned_start = aligned_start.replace(minute=30)
     else:
         aligned_start = aligned_start.replace(minute=0)
-        
+    
+    # Round end up to next 30-min boundary  
     aligned_end = end_time.replace(second=0, microsecond=0)
-    if aligned_end.minute > 30:
+    if end_time.minute > 30:
         aligned_end = aligned_end.replace(minute=0) + datetime.timedelta(hours=1)
-    elif aligned_end.minute > 0:
+    elif end_time.minute > 0:
         aligned_end = aligned_end.replace(minute=30)
     
-    # Calculate padding pixels
+    # Calculate padding needed to align data with tick marks
     # 1 pixel = target_interval minutes (1 minute)
     pixels_per_minute = 1.0 / target_interval
     
@@ -711,13 +725,22 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     visual_padding_pixels = 5
     
     # Pad the matrix
+    # Since fine_grained_slots now starts from aligned boundaries, the edge data
+    # should be real computed values (not just repeated edge values)
     padded_matrix = []
+    total_left_padding = pad_left_pixels + visual_padding_pixels
+    total_right_padding = pad_right_pixels + visual_padding_pixels
     for row in upsampled_matrix:
-        # Pad left with first value
-        left_padding = [row[0]] * (pad_left_pixels + visual_padding_pixels)
-        # Pad right with last value
-        right_padding = [row[-1]] * (pad_right_pixels + visual_padding_pixels)
+        # Pad left with first value (for visual margin only)
+        left_padding = [row[0]] * total_left_padding
+        # Pad right with last value (for visual margin only)
+        right_padding = [row[-1]] * total_right_padding
         padded_matrix.append(left_padding + row + right_padding)
+    
+    # Track the valid data range (actual computed data, not padding)
+    # The padding on each side is: time alignment padding + visual margin
+    data_start_idx = total_left_padding
+    data_end_idx = len(padded_matrix[0]) - total_right_padding - 1
     
     # Render each row separately to avoid vertical blending
     # This allows us to use bilinear interpolation for smooth horizontal gradients
@@ -800,8 +823,9 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     while current_tick <= aligned_end:
         # Calculate position relative to aligned start
-        # Since we padded the matrix, index 0 corresponds to aligned_start MINUS visual_padding_pixels
-        # So aligned_start is at index visual_padding_pixels
+        # The padded matrix layout: [visual_padding][pad_left (time alignment)][actual data][pad_right][visual_padding]
+        # aligned_start corresponds to the start of pad_left, which is at index visual_padding_pixels
+        # When input times are pre-aligned (as they should be from the main flow), pad_left_pixels = 0
         pos = (current_tick - aligned_start).total_seconds() / 60 * pixels_per_minute + visual_padding_pixels
         
         tick_positions.append(pos)
@@ -833,7 +857,8 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     # We want high altitude to be visually 'up' (lower y value).
     for x_pos in tick_positions:
         col_idx = int(round(x_pos))
-        if 0 <= col_idx < len(padded_matrix[0]):
+        # Only draw dots within the valid data range (not in visual padding)
+        if data_start_idx <= col_idx <= data_end_idx:
             for body_idx in range(num_bodies):
                 val = padded_matrix[body_idx][col_idx]
                 if val > 0: # Visible
@@ -886,13 +911,13 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     time_label.set_path_effects(text_outline)
     
     # Add note about red time labels (bottom right corner)
-    if weather_blocks:
-        has_bad_weather = any(not wb['good'] for wb in weather_blocks.values())
-        if has_bad_weather:
-            # Position in line with Time label, aligned with right edge of plot (0.85)
-            warning_label = fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions.',
-                    ha='right', va='bottom', fontsize=9, style='italic', color=ChartColors.WARNING)
-            warning_label.set_path_effects(text_outline)
+    # Only show if there are actually red tick labels visible on the chart
+    has_red_ticks = ChartColors.WARNING in tick_colors
+    if has_red_ticks:
+        # Position in line with Time label, aligned with right edge of plot (0.85)
+        warning_label = fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions.',
+                ha='right', va='bottom', fontsize=9, style='italic', color=ChartColors.WARNING)
+        warning_label.set_path_effects(text_outline)
     
     # plt.tight_layout() # Removed as it conflicts with add_axes
     
@@ -1057,7 +1082,7 @@ def main():
     # 2. Determine Time Window (Tonight)
     now = datetime.datetime.now(local_tz)
     
-    sunset_dt, sunrise_dt = calculate_viewing_window(
+    search_start, search_end, astro_sunset, astro_sunrise = calculate_viewing_window(
         now, 
         settings.latitude, 
         settings.longitude,
@@ -1066,10 +1091,14 @@ def main():
     )
 
     print(f"\n--- Time Window ---")
-    print(f"Start: {sunset_dt.strftime('%Y-%m-%d %I:%M %p')}")
-    print(f"End:   {sunrise_dt.strftime('%Y-%m-%d %I:%M %p')}")
-    window_hours = (sunrise_dt - sunset_dt).total_seconds() / 3600
-    print(f"Duration: {window_hours:.1f} hours")
+    print(f"Astronomical Night: {astro_sunset.strftime('%I:%M %p')} - {astro_sunrise.strftime('%I:%M %p')}")
+    print(f"Search Window: {search_start.strftime('%I:%M %p')} - {search_end.strftime('%I:%M %p')}")
+    window_hours = (search_end - search_start).total_seconds() / 3600
+    print(f"Search Duration: {window_hours:.1f} hours")
+    
+    # For compatibility with existing code, use search window as primary
+    sunset_dt = search_start
+    sunrise_dt = search_end
     
     # Load Skyfield data for body calculations
     ts = load.timescale()
@@ -1091,7 +1120,8 @@ def main():
 
     # 4. Correlate Weather with Time Window
     print("\n--- Weather Analysis ---")
-    print(f"Checking weather between {sunset_dt.strftime('%I:%M %p')} and {sunrise_dt.strftime('%I:%M %p')}")
+    print(f"Checking weather for full night: {astro_sunset.strftime('%I:%M %p')} to {astro_sunrise.strftime('%I:%M %p')}")
+    print(f"Search window: {sunset_dt.strftime('%I:%M %p')} to {sunrise_dt.strftime('%I:%M %p')}")
     print(f"Limits: Cloud<={settings.cloud_cover_limit}%, Precip<={settings.precip_prob_limit}%")
     print("")
     
@@ -1105,21 +1135,25 @@ def main():
         if dt.tzinfo is None:
             dt = local_tz.localize(dt)
         
-        if sunset_dt <= dt <= sunrise_dt:
+        # Populate weather for the FULL astronomical night (for flood-fill capability)
+        if astro_sunset <= dt <= astro_sunrise:
             cc = cloud_covers[i]
             pp = precip_probs[i]
             
             is_good = cc <= settings.cloud_cover_limit and pp <= settings.precip_prob_limit
-            status = "[OK] PASS" if is_good else "[X] FAIL"
-            print(f"  {dt.strftime('%I:%M %p')}: Cloud {cc:3}%, Precip {pp:3}% -> {status}")
-
-            all_window_slots.append({'time': dt, 'is_good': is_good})
             weather_blocks[dt] = {'cloud': cc, 'precip': pp, 'good': is_good}
-            if is_good:
-                good_viewing_slots.append(dt)
-                good_hours += 1
-            else:
-                bad_hours += 1
+            
+            # Only print and count for the search window
+            if sunset_dt <= dt <= sunrise_dt:
+                status = "[OK] PASS" if is_good else "[X] FAIL"
+                print(f"  {dt.strftime('%I:%M %p')}: Cloud {cc:3}%, Precip {pp:3}% -> {status}")
+
+                all_window_slots.append({'time': dt, 'is_good': is_good})
+                if is_good:
+                    good_viewing_slots.append(dt)
+                    good_hours += 1
+                else:
+                    bad_hours += 1
     
     print(f"\nWeather Summary: {good_hours} good hours, {bad_hours} bad hours ({good_hours}/{good_hours+bad_hours} total)")
 
@@ -1161,20 +1195,35 @@ def main():
     print(f"  Total good hours: {len(good_viewing_slots)}")
 
     # 6. Generate fine-grained time slots for astronomical checks
-    # We'll check astronomy every CHECK_INTERVAL_MINUTES for the ENTIRE night
+    # Generate slots for the FULL astronomical night (sunset to sunrise) to allow flood-fill expansion
+    # Align to 30-minute boundaries so chart ticks always have real data
     print(f"\n--- Generating {settings.check_interval_minutes}-minute interval slots ---")
+    
+    # Align start to previous 30-min boundary
+    aligned_night_start = astro_sunset.replace(second=0, microsecond=0)
+    if aligned_night_start.minute >= 30:
+        aligned_night_start = aligned_night_start.replace(minute=30)
+    else:
+        aligned_night_start = aligned_night_start.replace(minute=0)
+    
+    # Align end to next 30-min boundary
+    aligned_night_end = astro_sunrise.replace(second=0, microsecond=0)
+    if astro_sunrise.minute > 30:
+        aligned_night_end = aligned_night_end.replace(minute=0) + datetime.timedelta(hours=1)
+    elif astro_sunrise.minute > 0:
+        aligned_night_end = aligned_night_end.replace(minute=30)
     
     fine_grained_slots = []
     interval_delta = datetime.timedelta(minutes=settings.check_interval_minutes)
     
-    # Generate slots for the entire night window (sunset to sunrise)
-    current_time = sunset_dt
-    while current_time <= sunrise_dt:
+    # Generate slots from aligned start to aligned end
+    current_time = aligned_night_start
+    while current_time <= aligned_night_end:
         fine_grained_slots.append(current_time)
         current_time += interval_delta
     
     print(f"Generated {len(fine_grained_slots)} time slots at {settings.check_interval_minutes}-minute intervals")
-    print(f"Spanning {sunset_dt.strftime('%I:%M %p')} to {sunrise_dt.strftime('%I:%M %p')}")
+    print(f"Spanning aligned night: {aligned_night_start.strftime('%I:%M %p')} to {aligned_night_end.strftime('%I:%M %p')}")
 
     # 7. Check Astronomical Bodies for fine-grained slots
     report_lines = []
@@ -1436,43 +1485,120 @@ def main():
         end_str = block['end'].strftime('%I:%M %p')
         print(f"  #{i}: {start_str}-{end_str} ({block['duration']}h) - avg {block['avg_bodies']:.1f} bodies, max {block['max_bodies']}")
 
-
-    # 10. Construct Notification
+    # 10. Flood-fill the best block to expand into full astronomical night
     best_block = viewing_blocks[0]
+    
+    print(f"\n--- Flood-Fill Expansion ---")
+    print(f"Search window: {search_start.strftime('%I:%M %p')} - {search_end.strftime('%I:%M %p')}")
+    print(f"Astronomical limits: {astro_sunset.strftime('%I:%M %p')} - {astro_sunrise.strftime('%I:%M %p')}")
+    
+    # Check if block touches search window boundaries and can be expanded
+    block_start = best_block['start']
+    block_end = best_block['end']
+    
+    # Helper to check if a time slot has good conditions
+    def slot_is_good(dt):
+        """Check if a time slot has good weather AND at least one visible body"""
+        if dt not in visibility_grid:
+            return False
+        nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+        has_good_weather = nearest_hour in weather_blocks and weather_blocks[nearest_hour]['good']
+        has_visible_body = visibility_grid[dt]['count'] > 0
+        return has_good_weather and has_visible_body
+    
+    # Expand backward (earlier) if block starts at or near search window start
+    # AND there's actually a buffer zone to expand into (search_start > astro_sunset)
+    time_tolerance = datetime.timedelta(minutes=settings.check_interval_minutes * 2)
+    expanded_start = block_start
+    
+    has_start_buffer = search_start > astro_sunset + time_tolerance
+    if has_start_buffer and block_start <= search_start + time_tolerance:
+        print(f"Block touches start boundary, expanding backward...")
+        # Find slots before block_start, going back toward astro_sunset
+        earlier_slots = [dt for dt in fine_grained_slots if dt < block_start and dt >= astro_sunset]
+        earlier_slots.sort(reverse=True)  # Most recent first
+        
+        for dt in earlier_slots:
+            if slot_is_good(dt):
+                expanded_start = dt
+                print(f"  Expanded start to {dt.strftime('%I:%M %p')}")
+            else:
+                print(f"  Stopped at {dt.strftime('%I:%M %p')} (bad conditions)")
+                break
+    elif not has_start_buffer:
+        print("No start buffer zone (search starts at sunset)")
+    
+    # Expand forward (later) if block ends at or near search window end
+    # AND there's actually a buffer zone to expand into (search_end < astro_sunrise)
+    expanded_end = block_end
+    
+    has_end_buffer = search_end < astro_sunrise - time_tolerance
+    if has_end_buffer and block_end >= search_end - time_tolerance:
+        print(f"Block touches end boundary, expanding forward...")
+        # Find slots after block_end, going forward toward astro_sunrise
+        later_slots = [dt for dt in fine_grained_slots if dt > block_end and dt <= astro_sunrise]
+        later_slots.sort()  # Earliest first
+        
+        for dt in later_slots:
+            if slot_is_good(dt):
+                expanded_end = dt
+                print(f"  Expanded end to {dt.strftime('%I:%M %p')}")
+            else:
+                print(f"  Stopped at {dt.strftime('%I:%M %p')} (bad conditions)")
+                break
+    elif not has_end_buffer:
+        print("No end buffer zone (search ends at sunrise)")
+    
+    # Update the best block with expanded times
+    if expanded_start != block_start or expanded_end != block_end:
+        # Rebuild the block with expanded time range
+        expanded_times = [dt for dt in fine_grained_slots if expanded_start <= dt <= expanded_end]
+        best_block['times'] = expanded_times
+        best_block['start'] = expanded_start
+        best_block['end'] = expanded_end
+        best_block['duration'] = len(expanded_times)
+        print(f"Expanded block: {expanded_start.strftime('%I:%M %p')} - {expanded_end.strftime('%I:%M %p')}")
+    else:
+        print("No expansion needed (block doesn't touch boundaries or already at limits)")
+
+    # 11. Construct Notification
     best_start = best_block['start'].strftime('%I:%M %p')
     best_end = best_block['end'].strftime('%I:%M %p')
     
     # Simple message: just the header and time interval
     message_parts = [
-        "Good night sky viewing! Go outside and look up! 🌌✨",
+        "✨ Good night sky viewing tonight ✨",
         f"{best_start} - {best_end}"
     ]
     
     # Generate visual chart image (use ALL fine-grained slots, not just qualified times)
     print("\n--- Generating Visibility Chart Image ---")
     
-    # Filter targets to only include bodies visible across the ENTIRE best block
-    # A body must be visible at EVERY time slot in the best block to be included in the chart
+    # Include bodies that have ANY overlap with the best block timeframe
+    # (not requiring visibility for the entire block)
     filtered_targets = []
     for name in TARGETS:
         if name not in bodies_meeting_requirement:
             continue
         
-        # Check if this body is visible at every time in the best block
-        visible_at_all_times = all(
+        # Check if this body is visible at ANY time in the best block
+        visible_at_any_time = any(
             name in visibility_grid[dt]['bodies']
             for dt in best_block['times']
         )
         
-        if visible_at_all_times:
+        if visible_at_any_time:
             filtered_targets.append(name)
-            print(f"  Including {name} (visible entire block)")
+            # Count how many slots it's visible for
+            visible_count = sum(1 for dt in best_block['times'] if name in visibility_grid[dt]['bodies'])
+            total_count = len(best_block['times'])
+            print(f"  Including {name} (visible {visible_count}/{total_count} slots)")
         else:
-            print(f"  Excluding {name} (not visible entire block)")
+            print(f"  Excluding {name} (not visible in block)")
     
-    # If no bodies are visible for the entire block, fall back to bodies meeting requirements
+    # If no bodies have overlap, fall back to all bodies meeting requirements
     if not filtered_targets:
-        print("  Note: No bodies visible entire block, using all bodies meeting requirements")
+        print("  Note: No bodies visible in block, using all bodies meeting requirements")
         filtered_targets = list(bodies_meeting_requirement.keys())
     
     # Format date for chart title
@@ -1481,8 +1607,31 @@ def main():
     else:
         chart_date = None
     
+    # Only chart the times in the best block (after flood-fill expansion)
+    # Extend to aligned 30-minute boundaries so chart edge ticks have real data
+    block_times = best_block['times']
+    block_start = block_times[0]
+    block_end = block_times[-1]
+    
+    # Calculate aligned start (round down to previous 30-min boundary)
+    aligned_chart_start = block_start.replace(second=0, microsecond=0)
+    if aligned_chart_start.minute >= 30:
+        aligned_chart_start = aligned_chart_start.replace(minute=30)
+    else:
+        aligned_chart_start = aligned_chart_start.replace(minute=0)
+    
+    # Calculate aligned end (round up to next 30-min boundary)
+    aligned_chart_end = block_end.replace(second=0, microsecond=0)
+    if block_end.minute > 30:
+        aligned_chart_end = aligned_chart_end.replace(minute=0) + datetime.timedelta(hours=1)
+    elif block_end.minute > 0:
+        aligned_chart_end = aligned_chart_end.replace(minute=30)
+    
+    # Get all slots within the aligned range (fine_grained_slots has data for aligned times)
+    chart_slots = [dt for dt in fine_grained_slots if aligned_chart_start <= dt <= aligned_chart_end]
+    
     image_data = create_visibility_chart(
-        fine_grained_slots,  # Use ALL time slots for full granularity
+        chart_slots,  # Use best block times
         visibility_grid, 
         body_visibility, 
         filtered_targets,  # Use filtered list instead of TARGETS

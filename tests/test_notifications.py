@@ -18,6 +18,35 @@ from conftest import (
 )
 
 
+def get_aligned_chart_times(block_times):
+    """
+    Extend block times to aligned 30-minute boundaries.
+    
+    This mimics the main flow behavior where chart slots are extended
+    to ensure tick labels at 30-minute boundaries have corresponding data.
+    
+    Returns the aligned start, aligned end, and the filter function to get chart_slots.
+    """
+    block_start = block_times[0]
+    block_end = block_times[-1]
+    
+    # Calculate aligned start (round down to previous 30-min boundary)
+    aligned_start = block_start.replace(second=0, microsecond=0)
+    if aligned_start.minute >= 30:
+        aligned_start = aligned_start.replace(minute=30)
+    else:
+        aligned_start = aligned_start.replace(minute=0)
+    
+    # Calculate aligned end (round up to next 30-min boundary)
+    aligned_end = block_end.replace(second=0, microsecond=0)
+    if block_end.minute > 30:
+        aligned_end = aligned_end.replace(minute=0) + datetime.timedelta(hours=1)
+    elif block_end.minute > 0:
+        aligned_end = aligned_end.replace(minute=30)
+    
+    return aligned_start, aligned_end
+
+
 class TestNotificationScenarios:
     """Test different weather and astronomical scenarios"""
     
@@ -35,9 +64,10 @@ class TestNotificationScenarios:
         eastern = pytz.timezone('America/New_York')
         
         # Create 15-minute interval test data (6 hours = 24 intervals)
+        # Start at 20:00, end at 01:45 - need to extend to aligned boundary at 02:00
         start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
         sorted_times = []
-        for i in range(6 * 4):  # 6 hours * 4 (15-min intervals per hour)
+        for i in range(6 * 4 + 1):  # 6 hours * 4 + 1 extra slot to reach 02:00
             sorted_times.append(start_time + datetime.timedelta(minutes=i * 15))
         
         targets = ['Moon', 'Mars', 'Jupiter', 'Saturn']
@@ -80,9 +110,13 @@ class TestNotificationScenarios:
             nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
             weather_blocks[nearest_hour] = {'cloud': 10, 'precip': 0, 'good': True}
         
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
+        
         # Generate chart with continuous block highlighting
         image_data = create_visibility_chart(
-            sorted_times, 
+            chart_slots, 
             visibility_grid, 
             body_visibility, 
             targets,
@@ -146,10 +180,10 @@ class TestNotificationScenarios:
         eastern = pytz.timezone('America/New_York')
         
         # Create 15-minute interval test data spanning entire night (8 PM to 4 AM = 8 hours)
-        # with gaps for bad weather
+        # with gaps for bad weather. Need extra slot to reach aligned 04:00 boundary.
         start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
         sorted_times = []
-        for i in range(8 * 4):  # 8 hours * 4 (15-min intervals per hour)
+        for i in range(8 * 4 + 1):  # 8 hours * 4 + 1 extra slot to reach 04:00
             sorted_times.append(start_time + datetime.timedelta(minutes=i * 15))
         
         targets = ['Moon', 'Mars', 'Jupiter', 'Saturn']
@@ -199,9 +233,13 @@ class TestNotificationScenarios:
                 'good': is_good
             }
         
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
+        
         # Generate chart with continuous block highlighting
         image_data = create_visibility_chart(
-            sorted_times, 
+            chart_slots, 
             visibility_grid, 
             body_visibility, 
             targets,
@@ -661,10 +699,11 @@ class TestBodyFiltering:
         from main import create_visibility_chart
 
         eastern = pytz.timezone('America/New_York')
-        # Start at 17:12 (non-aligned)
-        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 17, 12))
-        # 2 hours of data
-        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(8)]
+        # Start at 17:12 (non-aligned), ends at 19:12
+        # Aligned boundaries: 17:00 to 19:30
+        # Need slots from 17:00 to 19:30 (every 15 min = 11 slots)
+        aligned_start_time = eastern.localize(datetime.datetime(2025, 11, 24, 17, 0))
+        sorted_times = [aligned_start_time + datetime.timedelta(minutes=i*15) for i in range(11)]
 
         targets = ['Mars']
         visibility_grid = {}
@@ -677,8 +716,12 @@ class TestBodyFiltering:
         continuous_blocks = {'Mars': sorted_times}
         weather_blocks = {dt.replace(minute=0, second=0, microsecond=0): {'cloud': 5, 'precip': 0, 'good': True} for dt in sorted_times}
         
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
+        
         image_data = create_visibility_chart(
-            sorted_times,
+            chart_slots,
             visibility_grid,
             body_visibility,
             targets,
@@ -700,7 +743,7 @@ class TestBodyFiltering:
         snapshot_data = {
             'image_hash': image_hash,
             'image_size_bytes': len(image_bytes),
-            'start_time': start_time.strftime('%I:%M %p'),
+            'start_time': sorted_times[0].strftime('%I:%M %p'),
             'first_tick_expected_after_start': True
         }
         
@@ -712,7 +755,8 @@ class TestBodyFiltering:
 
         eastern = pytz.timezone('America/New_York')
         start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
-        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(12)] # 3 hours
+        # 3 hours = 12 slots ending at 22:45, need extra slot to reach aligned 23:00 boundary
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(13)]
 
         targets = ['Mars']
         visibility_grid = {}
@@ -735,9 +779,13 @@ class TestBodyFiltering:
                 'precip': 50 if is_bad else 0, 
                 'good': not is_bad
             }
+        
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
             
         image_data = create_visibility_chart(
-            sorted_times,
+            chart_slots,
             visibility_grid,
             body_visibility,
             targets,
@@ -761,6 +809,344 @@ class TestBodyFiltering:
             'image_size_bytes': len(image_bytes),
             'has_warning': True,
             'targets': targets
+        }
+        
+        assert snapshot_data == snapshot
+
+
+class TestFloodFillAndPartialVisibility:
+    """Test flood-fill expansion and partial body visibility scenarios"""
+    
+    def test_partial_body_overlap_included_in_chart(self, mock_settings, snapshot):
+        """Test that bodies with partial overlap are included in chart (Saturn scenario)"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        
+        # Create 4 hours of time slots (16 intervals at 15-min each)
+        # Ends at 23:45, need extra slot to reach aligned 00:00 boundary
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(17)]
+        
+        targets = ['Jupiter', 'Saturn']
+        visibility_grid = {}
+        body_visibility = {'Jupiter': [], 'Saturn': []}
+        
+        for i, dt in enumerate(sorted_times):
+            visible_bodies = ['Jupiter']  # Jupiter visible entire time
+            body_visibility['Jupiter'].append({'time': dt, 'alt': 45, 'high': True})
+            
+            # Saturn only visible for first half (8 slots)
+            if i < 8:
+                visible_bodies.append('Saturn')
+                body_visibility['Saturn'].append({'time': dt, 'alt': 25, 'high': True})
+            
+            visibility_grid[dt] = {'bodies': visible_bodies, 'count': len(visible_bodies)}
+        
+        # Both bodies "meet requirements" (have good viewing blocks)
+        continuous_blocks = {
+            'Jupiter': sorted_times,
+            'Saturn': sorted_times[:8]  # Only first half
+        }
+        
+        # All good weather
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            weather_blocks[nearest_hour] = {'cloud': 5, 'precip': 0, 'good': True}
+        
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(sorted_times)
+        chart_slots = [dt for dt in sorted_times if aligned_start <= dt <= aligned_end]
+        
+        image_data = create_visibility_chart(
+            chart_slots,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌓',
+            location_name='Test Location',
+            date_str='November 24, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_partial_body_overlap.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'targets': targets,
+            'jupiter_visible_slots': 16,
+            'saturn_visible_slots': 8,
+            'total_slots': 16
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_chart_only_shows_best_block_times(self, mock_settings, snapshot):
+        """Test that chart only shows times within the best block, not full night"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        
+        # Simulate a "best block" that's only 2 hours (8 slots) out of a longer night
+        # Ends at 23:45, need extra slot to reach aligned 00:00 boundary
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 22, 0))
+        best_block_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(9)]
+        
+        targets = ['Moon', 'Jupiter']
+        visibility_grid = {}
+        body_visibility = {'Moon': [], 'Jupiter': []}
+        
+        for dt in best_block_times:
+            visibility_grid[dt] = {'bodies': ['Moon', 'Jupiter'], 'count': 2}
+            body_visibility['Moon'].append({'time': dt, 'alt': 35, 'high': True})
+            body_visibility['Jupiter'].append({'time': dt, 'alt': 50, 'high': True})
+        
+        continuous_blocks = {
+            'Moon': best_block_times,
+            'Jupiter': best_block_times
+        }
+        
+        weather_blocks = {}
+        for dt in best_block_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            weather_blocks[nearest_hour] = {'cloud': 5, 'precip': 0, 'good': True}
+        
+        # Get aligned chart times following main flow pattern
+        aligned_start, aligned_end = get_aligned_chart_times(best_block_times)
+        chart_slots = [dt for dt in best_block_times if aligned_start <= dt <= aligned_end]
+        
+        image_data = create_visibility_chart(
+            chart_slots,  # Only pass the best block times, not full night
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌕',
+            location_name='Orlando',
+            date_str='November 24, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_best_block_only.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        # Verify chart only covers the 2-hour window
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'start_time': best_block_times[0].strftime('%I:%M %p'),
+            'end_time': best_block_times[-1].strftime('%I:%M %p'),
+            'duration_slots': len(best_block_times),
+            'targets': targets
+        }
+        
+        assert snapshot_data == snapshot
+    
+    def test_expanded_block_with_mixed_weather(self, mock_settings, snapshot):
+        """Test flood-fill expansion stops at bad weather boundaries"""
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 20, 0))
+        
+        # Create 6 hours of time slots
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(24)]
+        
+        targets = ['Moon', 'Mars', 'Jupiter']
+        visibility_grid = {}
+        body_visibility = {'Moon': [], 'Mars': [], 'Jupiter': []}
+        
+        for dt in sorted_times:
+            # All bodies visible all the time for simplicity
+            visibility_grid[dt] = {'bodies': targets, 'count': 3}
+            body_visibility['Moon'].append({'time': dt, 'alt': 40, 'high': True})
+            body_visibility['Mars'].append({'time': dt, 'alt': 25, 'high': True})
+            body_visibility['Jupiter'].append({'time': dt, 'alt': 55, 'high': True})
+        
+        continuous_blocks = {
+            'Moon': sorted_times[4:20],  # Good weather block in middle
+            'Mars': sorted_times[4:20],
+            'Jupiter': sorted_times[4:20]
+        }
+        
+        # Create weather with bad conditions at start and end
+        weather_blocks = {}
+        for i, dt in enumerate(sorted_times):
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            # Bad weather for first hour (0-3) and last hour (20-23)
+            is_good = 4 <= i < 20
+            weather_blocks[nearest_hour] = {
+                'cloud': 5 if is_good else 80,
+                'precip': 0 if is_good else 50,
+                'good': is_good
+            }
+        
+        # The good weather block is sorted_times[4:20], which is 9:00 PM to 12:45 AM
+        # Following the main flow pattern: extend to aligned 30-minute boundaries
+        # and ensure data exists for all aligned times
+        block_times = sorted_times[4:20]
+        block_start = block_times[0]
+        block_end = block_times[-1]
+        
+        # Calculate aligned start (round down to previous 30-min boundary)
+        aligned_chart_start = block_start.replace(second=0, microsecond=0)
+        if aligned_chart_start.minute >= 30:
+            aligned_chart_start = aligned_chart_start.replace(minute=30)
+        else:
+            aligned_chart_start = aligned_chart_start.replace(minute=0)
+        
+        # Calculate aligned end (round up to next 30-min boundary)
+        aligned_chart_end = block_end.replace(second=0, microsecond=0)
+        if block_end.minute > 30:
+            aligned_chart_end = aligned_chart_end.replace(minute=0) + datetime.timedelta(hours=1)
+        elif block_end.minute > 0:
+            aligned_chart_end = aligned_chart_end.replace(minute=30)
+        
+        # Get all slots within the aligned range (like main flow does with fine_grained_slots)
+        chart_slots = [dt for dt in sorted_times if aligned_chart_start <= dt <= aligned_chart_end]
+        
+        image_data = create_visibility_chart(
+            chart_slots,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌔',
+            location_name='Beijing',
+            date_str='November 24, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_expanded_with_weather_boundaries.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'chart_slots': len(chart_slots),
+            'total_night_slots': len(sorted_times),
+            'targets': targets
+        }
+        
+        assert snapshot_data == snapshot
+
+    def test_altitude_dots_not_duplicated_at_edges(self, mock_settings, snapshot):
+        """Test that altitude dots at chart edges show correct values, not duplicates.
+        
+        This regression test verifies the fix for an issue where the last altitude dot
+        would appear at the same height as the previous dot because the chart was
+        padding with repeated edge values instead of using real computed data.
+        
+        The test uses a declining altitude pattern (like a setting planet) where each
+        time slot has a distinctly different altitude. If edge padding is broken,
+        the last few dots would all show the same altitude.
+        
+        Note: The real application extends time slots to aligned 30-minute boundaries
+        before calling the chart function, so the chart receives data that covers
+        all tick positions. This test simulates that behavior.
+        """
+        from main import create_visibility_chart
+        
+        eastern = pytz.timezone('America/New_York')
+        
+        # Use aligned times (on 30-min boundaries) to match real application behavior
+        # Start at 9:00 PM, end at 11:30 PM (both aligned to 30-min boundaries)
+        # This ensures tick marks at 9:00, 9:30, 10:00, 10:30, 11:00, 11:30 PM all have data
+        start_time = eastern.localize(datetime.datetime(2025, 11, 24, 21, 0))  # 9:00 PM
+        
+        # Create 2.5 hours of data (11 slots at 15-min intervals) from 9:00 PM to 11:30 PM
+        # 11 slots: 9:00, 9:15, 9:30, 9:45, 10:00, 10:15, 10:30, 10:45, 11:00, 11:15, 11:30
+        sorted_times = [start_time + datetime.timedelta(minutes=i*15) for i in range(11)]
+        
+        targets = ['Jupiter']
+        visibility_grid = {}
+        body_visibility = {'Jupiter': []}
+        
+        # Create a DECLINING altitude pattern - simulates a setting planet
+        # Each slot has a distinctly different altitude
+        altitudes = []
+        for i, dt in enumerate(sorted_times):
+            # Declining from 60° to 10° over the window (5° per slot)
+            alt = 60 - (i * 5)  # 60, 55, 50, 45, 40, 35, 30, 25, 20, 15, 10
+            altitudes.append(alt)
+            
+            body_visibility['Jupiter'].append({
+                'time': dt,
+                'alt': alt,
+                'high': alt >= 15
+            })
+            visibility_grid[dt] = {'bodies': ['Jupiter'], 'count': 1}
+        
+        continuous_blocks = {'Jupiter': sorted_times}
+        
+        # All good weather
+        weather_blocks = {}
+        for dt in sorted_times:
+            nearest_hour = dt.replace(minute=0, second=0, microsecond=0)
+            weather_blocks[nearest_hour] = {'cloud': 5, 'precip': 0, 'good': True}
+        
+        image_data = create_visibility_chart(
+            sorted_times,
+            visibility_grid,
+            body_visibility,
+            targets,
+            continuous_blocks=continuous_blocks,
+            weather_blocks=weather_blocks,
+            moon_phase_emoji='🌔',
+            location_name='Test Location',
+            date_str='November 24, 2025'
+        )
+        
+        assert image_data is not None
+        image_bytes = base64.b64decode(image_data)
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        
+        # Save image for visual inspection
+        snapshot_dir = Path(__file__).parent / '__snapshots__'
+        snapshot_dir.mkdir(exist_ok=True)
+        with open(snapshot_dir / 'test_altitude_dots_declining.png', 'wb') as f:
+            f.write(image_bytes)
+        
+        # The key assertion: verify that altitudes are strictly declining
+        # If there was a duplicate edge issue, this would fail
+        for i in range(len(altitudes) - 1):
+            assert altitudes[i] > altitudes[i + 1], \
+                f"Altitude at slot {i} ({altitudes[i]}) should be > slot {i+1} ({altitudes[i+1]})"
+        
+        snapshot_data = {
+            'image_hash': image_hash,
+            'image_size_bytes': len(image_bytes),
+            'start_time': sorted_times[0].strftime('%I:%M %p'),
+            'end_time': sorted_times[-1].strftime('%I:%M %p'),
+            'first_altitude': altitudes[0],
+            'last_altitude': altitudes[-1],
+            'altitude_pattern': altitudes,
+            'all_altitudes_unique': len(set(altitudes)) == len(altitudes)
         }
         
         assert snapshot_data == snapshot

@@ -42,9 +42,9 @@
 # name: TestBodyFiltering.test_non_aligned_time_window
   dict({
     'first_tick_expected_after_start': True,
-    'image_hash': 'bbaaa677f43a73421d5d5ea43a68ab158cbb1fa39b5f668ba6574c1683b48708',
-    'image_size_bytes': 141210,
-    'start_time': '05:12 PM',
+    'image_hash': '0be0ac2ef2638af74dc112f1d0b478496561fe988396d2fb05ba1fb8bab7cbda',
+    'image_size_bytes': 143985,
+    'start_time': '05:00 PM',
   })
 # ---
 # name: TestBodyFiltering.test_single_body_poor_visibility
@@ -73,6 +73,69 @@
     'total_slots': 1,
   })
 # ---
+# name: TestFloodFillAndPartialVisibility.test_altitude_dots_not_duplicated_at_edges
+  dict({
+    'all_altitudes_unique': True,
+    'altitude_pattern': list([
+      60,
+      55,
+      50,
+      45,
+      40,
+      35,
+      30,
+      25,
+      20,
+      15,
+      10,
+    ]),
+    'end_time': '11:30 PM',
+    'first_altitude': 60,
+    'image_hash': 'f5da8cdce447add777a38e6c82d8ec21ce9c29f784fc99658d451a800ea8b295',
+    'image_size_bytes': 159955,
+    'last_altitude': 10,
+    'start_time': '09:00 PM',
+  })
+# ---
+# name: TestFloodFillAndPartialVisibility.test_chart_only_shows_best_block_times
+  dict({
+    'duration_slots': 9,
+    'end_time': '12:00 AM',
+    'image_hash': '605a4646618ba83109e7767d0a4887b83483a525c5f6da2a821904d9c62eaaa9',
+    'image_size_bytes': 138689,
+    'start_time': '10:00 PM',
+    'targets': list([
+      'Moon',
+      'Jupiter',
+    ]),
+  })
+# ---
+# name: TestFloodFillAndPartialVisibility.test_expanded_block_with_mixed_weather
+  dict({
+    'chart_slots': 17,
+    'image_hash': '219b8e6a00a025b4a64b3cd29c4b732fa8385c1e6b7cf5888177b6a7023b8086',
+    'image_size_bytes': 154219,
+    'targets': list([
+      'Moon',
+      'Mars',
+      'Jupiter',
+    ]),
+    'total_night_slots': 24,
+  })
+# ---
+# name: TestFloodFillAndPartialVisibility.test_partial_body_overlap_included_in_chart
+  dict({
+    'image_hash': '42c7bf2a27f5b778c0dfae49aeadbe69babe0896576e16cda2e3f432ae02129b',
+    'image_size_bytes': 150439,
+    'jupiter_visible_slots': 16,
+    'saturn_visible_slots': 8,
+    'targets': list([
+      'Jupiter',
+      'Saturn',
+    ]),
+    'total_slots': 16,
+  })
+# ---
 # name: TestNotificationScenarios.test_ascii_chart_generation
   '''
   Time      Moon     Mars     Jupiter  Saturn  
@@ -90,8 +153,8 @@
       'Moon': 32,
       'Saturn': 25,
     }),
-    'image_hash': 'f8a17bf290e75f76aba3c14791182b8c36c66829f2ead831cc82ca7af5d45f08',
-    'image_size_bytes': 172007,
+    'image_hash': '446b454a2552f1a3fda1b8b54221f2c97a18ba4dbfa5e6f0e46c5adcc360f3e5',
+    'image_size_bytes': 172647,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',
@@ -125,6 +188,7 @@
       '2025-11-25 03:15 AM',
       '2025-11-25 03:30 AM',
       '2025-11-25 03:45 AM',
+      '2025-11-25 04:00 AM',
     ]),
     'visibility_summary': dict({
       '01:00 AM': 4,
@@ -139,6 +203,7 @@
       '03:15 AM': 4,
       '03:30 AM': 4,
       '03:45 AM': 4,
+      '04:00 AM': 0,
       '08:00 PM': 3,
       '08:15 PM': 3,
       '08:30 PM': 3,
@@ -202,9 +267,10 @@
           41.0,
           40.0,
           39.0,
+          38.0,
         ]),
-        'high_altitude_hours': 24,
-        'total_visible_hours': 24,
+        'high_altitude_hours': 25,
+        'total_visible_hours': 25,
       }),
       'Mars': dict({
         'altitudes': list([
@@ -232,9 +298,10 @@
           19.5,
           19.0,
           18.5,
+          18.0,
         ]),
-        'high_altitude_hours': 12,
-        'total_visible_hours': 24,
+        'high_altitude_hours': 13,
+        'total_visible_hours': 25,
       }),
       'Moon': dict({
         'altitudes': list([
@@ -262,9 +329,10 @@
           33.75,
           32.5,
           31.25,
+          30.0,
         ]),
-        'high_altitude_hours': 24,
-        'total_visible_hours': 24,
+        'high_altitude_hours': 25,
+        'total_visible_hours': 25,
       }),
       'Saturn': dict({
         'altitudes': list([
@@ -285,13 +353,14 @@
           9.5,
           9.0,
           8.5,
+          8.0,
         ]),
         'high_altitude_hours': 0,
-        'total_visible_hours': 17,
+        'total_visible_hours': 18,
       }),
     }),
-    'image_hash': 'ab1ec4dacc3a30852aade0af578b69660faacddc0081db146865f42d512e6604',
-    'image_size_bytes': 147960,
+    'image_hash': '13176a38be412c1dfd216def45803dd8d31e9972f3630fe9a8de844ac24b8354',
+    'image_size_bytes': 147863,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',
@@ -317,6 +386,7 @@
       '2025-11-25 01:15 AM',
       '2025-11-25 01:30 AM',
       '2025-11-25 01:45 AM',
+      '2025-11-25 02:00 AM',
     ]),
     'visibility_grid': dict({
       '01:00 AM': dict({
@@ -347,6 +417,15 @@
         'count': 4,
       }),
       '01:45 AM': dict({
+        'bodies': list([
+          'Moon',
+          'Mars',
+          'Jupiter',
+          'Saturn',
+        ]),
+        'count': 4,
+      }),
+      '02:00 AM': dict({
         'bodies': list([
           'Moon',
           'Mars',
