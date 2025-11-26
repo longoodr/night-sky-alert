@@ -333,7 +333,11 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     needed_body_height = len(targets) * BODY_HEIGHT_INCH
     chart_height = max(MIN_FIG_HEIGHT, BASE_HEIGHT_INCH + needed_body_height)
     
-    fig = plt.figure(figsize=(14, chart_height))
+    # Dark mode colors
+    bg_color = '#121212'
+    text_color = '#ffffff'
+    
+    fig = plt.figure(figsize=(14, chart_height), facecolor=bg_color)
     
     # Calculate normalized coordinates for the plot axes
     # We want the plot to be exactly 'needed_body_height' inches tall
@@ -347,6 +351,12 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     # Define axes positions [left, bottom, width, height]
     # Main plot: 10% left margin, 75% width
     ax = fig.add_axes([0.1, plot_bottom_norm, 0.75, plot_height_norm])
+    
+    # Set axis colors for dark mode
+    ax.tick_params(axis='x', colors=text_color)
+    ax.tick_params(axis='y', colors=text_color)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(text_color)
     
     # Colorbar: To the right, tall (elongated scale)
     # Let's make it 80% of the figure height, centered
@@ -405,59 +415,32 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
                 normalized_row.append(0.01 + (val / 90.0) * 0.99)
         normalized_matrix.append(normalized_row)
     
-    # Upsample horizontally for smooth transition
-    # Use 60 to ensure integer pixels per minute (60/15 = 4)
-    upsample_factor = 60
+    # Resample to 1-minute intervals using linear interpolation
+    # This provides a smooth gradient when rendered with bilinear interpolation
+    target_interval = 1
+    
+    # Calculate current interval
+    if len(sorted_times) > 1:
+        current_interval = (sorted_times[1] - sorted_times[0]).total_seconds() / 60
+    else:
+        current_interval = 15
+        
+    upsample_factor = int(current_interval / target_interval)
+    if upsample_factor < 1: upsample_factor = 1
+    
     upsampled_matrix = []
-
-    def catmull_rom(p0, p1, p2, p3, t):
-        return 0.5 * (
-            (2 * p1) +
-            (-p0 + p2) * t +
-            (2 * p0 - 5 * p1 + 4 * p2 - p3) * t**2 +
-            (-p0 + 3 * p1 - 3 * p2 + p3) * t**3
-        )
-
     for row in normalized_matrix:
         new_row = []
-        n = len(row)
-        for i in range(n - 1):
-            p1 = row[i]
-            p2 = row[i+1]
-            
-            # Handle boundaries with linear extrapolation
-            if i > 0:
-                p0 = row[i-1]
-            else:
-                p0 = 2 * p1 - p2
-                
-            if i < n - 2:
-                p3 = row[i+2]
-            else:
-                p3 = 2 * p2 - p1
-            
-            # Cubic interpolation
-            steps = []
+        for i in range(len(row) - 1):
+            start_val = row[i]
+            end_val = row[i+1]
+            # Linear interpolation
             for j in range(upsample_factor):
-                t = j / upsample_factor
-                val = catmull_rom(p0, p1, p2, p3, t)
-                val = max(0.0, min(1.0, val)) # Clamp
-                steps.append(val)
-            new_row.extend(steps)
-            
-        if n > 0:
-            new_row.append(row[-1]) # Append last value
+                val = start_val + (end_val - start_val) * (j / upsample_factor)
+                new_row.append(val)
+        new_row.append(row[-1]) # Append last value
         upsampled_matrix.append(new_row)
 
-    # Apply dithering to prevent color banding
-    # Add small random noise to break up quantization steps
-    noise_mag = 4 / cmap.N
-    for r in range(len(upsampled_matrix)):
-        for c in range(len(upsampled_matrix[r])):
-            noise = (random.random() - 0.5) * noise_mag
-            val = upsampled_matrix[r][c] + noise
-            upsampled_matrix[r][c] = max(0.0, min(1.0, val))
-    
     # Time labels - show at 30-minute intervals aligned to the hour/half-hour
     # Calculate time interval (assuming constant)
     if len(sorted_times) > 1:
@@ -482,7 +465,8 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         aligned_end = aligned_end.replace(minute=30)
     
     # Calculate padding pixels
-    pixels_per_minute = upsample_factor / interval_minutes
+    # 1 pixel = target_interval minutes (1 minute)
+    pixels_per_minute = 1.0 / target_interval
     
     pad_left_minutes = (start_time - aligned_start).total_seconds() / 60
     pad_left_pixels = int(round(pad_left_minutes * pixels_per_minute))
@@ -491,7 +475,8 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     pad_right_pixels = int(round(pad_right_minutes * pixels_per_minute))
     
     # Add extra visual padding so dots at the edges aren't cut off
-    visual_padding_pixels = 6
+    # 1 pixel = 1 minute, so 5 pixels padding is sufficient
+    visual_padding_pixels = 5
     
     # Pad the matrix
     padded_matrix = []
@@ -502,16 +487,37 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         right_padding = [row[-1]] * (pad_right_pixels + visual_padding_pixels)
         padded_matrix.append(left_padding + row + right_padding)
     
-    # Use 'none' interpolation to prevent vertical bleeding between bodies
-    # Horizontal smoothness is achieved by upsampling and dithering
-    im = ax.imshow(padded_matrix, cmap=cmap, aspect='auto', interpolation='none', vmin=0, vmax=1)
+    # Render each row separately to avoid vertical blending
+    # This allows us to use bilinear interpolation for smooth horizontal gradients
+    # while keeping sharp vertical boundaries between bodies.
+    im = None
+    for i, row in enumerate(padded_matrix):
+        # Reshape row to 1xN matrix
+        row_data = [row]
+        # Extent: [left, right, bottom, top]
+        # Note: y-axis is inverted by default for imshow, so top is i-0.5, bottom is i+0.5
+        # But extent expects (left, right, bottom, top) in data coordinates.
+        # If we don't invert y-axis manually, 0 is top.
+        # Let's use standard extent and let imshow handle it.
+        # We want row i to cover y range [i-0.5, i+0.5]
+        # Since y increases downwards (default), bottom is i+0.5, top is i-0.5
+        extent = [0, len(row), i + 0.5, i - 0.5]
+        
+        im = ax.imshow(row_data, cmap=cmap, aspect='auto', interpolation='bilinear', 
+                      vmin=0, vmax=1, extent=extent)
+    
+    # Set limits explicitly since we're adding multiple images
+    ax.set_xlim(0, len(padded_matrix[0]))
+    ax.set_ylim(num_bodies - 0.5, -0.5) # Inverted y-axis: max at bottom, min at top
     
     # Add colorbar showing altitude scale
     # Use the dedicated colorbar axes
     cbar = plt.colorbar(im, cax=cax)
-    cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11)
+    cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11, color=text_color)
     cbar.set_ticks([0, 0.17, 0.34, 0.51, 0.68, 0.84, 1.0])
     cbar.set_ticklabels(['≤0°', '15°', '30°', '45°', '60°', '75°', '90°'])
+    cbar.ax.yaxis.set_tick_params(color=text_color, labelcolor=text_color)
+    cbar.outline.set_edgecolor(text_color)
     
     # Set ticks and labels - add moon emoji to Moon label
     ax.set_yticks(range(num_bodies))
@@ -521,7 +527,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
             y_labels.append(f'Moon {moon_phase_emoji}')
         else:
             y_labels.append(target)
-    ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold')
+    ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold', color=text_color)
     
     # Left align y-axis labels using exact width calculation
     # We need to draw the canvas to get the text extents
@@ -560,11 +566,11 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         tick_labels.append(current_tick.strftime('%I:%M %p'))
         
         # Check weather for this tick
-        color = 'black'
+        color = text_color
         if weather_blocks:
             nearest_hour = current_tick.replace(minute=0, second=0, microsecond=0)
             if nearest_hour in weather_blocks and not weather_blocks[nearest_hour]['good']:
-                color = 'red'
+                color = '#ff4444'
         tick_colors.append(color)
         
         current_tick += datetime.timedelta(minutes=30)
@@ -575,8 +581,8 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     # Apply colors
     for i, color in enumerate(tick_colors):
         ax.get_xticklabels()[i].set_color(color)
-        if color == 'red':
-            ax.get_xticklabels()[i].set_weight('bold')
+        # if color == '#ff4444':
+        #     ax.get_xticklabels()[i].set_weight('bold')
 
     # Add altitude dots at tick marks
     # Since imshow origin is 'upper' (default), y increases downwards.
@@ -620,7 +626,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     # Use suptitle to keep title at the top of the figure, independent of the plot axis
     # Align title with the plot center (0.475) to match the Time label
-    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885)
+    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885, color=text_color)
     
     # Calculate Y position for labels (Time and Warning)
     # Place them approx 0.95 inches below the plot area to clear rotated tick labels
@@ -629,7 +635,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     # Add Time label manually to align with warning text
     # Plot is from 0.1 to 0.85 (width 0.75), so center is 0.475
-    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold')
+    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold', color=text_color)
     
     # Add note about red time labels (bottom right corner)
     if weather_blocks:
@@ -637,13 +643,13 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         if has_bad_weather:
             # Position in line with Time label, aligned with right edge of plot (0.85)
             fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions', 
-                    ha='right', va='bottom', fontsize=9, style='italic', color='red')
+                    ha='right', va='bottom', fontsize=9, style='italic', color='#ff4444')
     
     # plt.tight_layout() # Removed as it conflicts with add_axes
     
     # Save to bytes buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=bg_color)
     buf.seek(0)
     plt.close()
     

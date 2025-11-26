@@ -1,8 +1,8 @@
 # serializer version: 1
 # name: TestBodyFiltering.test_body_rising_during_block_excluded
   dict({
-    'image_hash': 'd5e6a53fcd092e0e3fbe8e8eccfb7361359df73628d6a83594b6ce6b29b26e4e',
-    'image_size_bytes': 31759,
+    'image_hash': '2f02f1c2c4b4768d5d571f0aa8404902821e0b69ef73a270a1ad53b72e2bde0c',
+    'image_size_bytes': 31585,
     'jupiter_excluded': True,
     'saturn_included': True,
     'targets_in_chart': list([
@@ -12,8 +12,8 @@
 # ---
 # name: TestBodyFiltering.test_body_setting_during_block_excluded
   dict({
-    'image_hash': '833e4df0922af434f820ae9a45d7083473fa2d791bee9f44bd2c4f278d830af3',
-    'image_size_bytes': 31588,
+    'image_hash': '616a2f35272840b42f5069dc82bf621d928281a5f616d12e0664b6e06b76480d',
+    'image_size_bytes': 31366,
     'jupiter_included': True,
     'moon_excluded': True,
     'targets_in_chart': list([
@@ -26,8 +26,8 @@
     'date': 'November 24, 2025',
     'has_date': True,
     'has_location': True,
-    'image_hash': 'e73340e7ba28400ed19e2e09c79b2ff0041bbd3963889696183c06fe96f783c0',
-    'image_size_bytes': 37767,
+    'image_hash': 'ee969d335877adf8b79eb9f255155a4097f0c008a87c024f2739ecdcc24bee64',
+    'image_size_bytes': 37541,
     'location': 'Orlando',
   })
 # ---
@@ -35,23 +35,23 @@
   dict({
     'altitude_degrees': 70,
     'high_altitude_test': True,
-    'image_hash': '34d15c30c3ae75ab5f798dadf85754d61d6e04d3e98bb53f777b8fe716608bd5',
-    'image_size_bytes': 30956,
+    'image_hash': 'f61c141eec57b7d94d5267757361dfc52996f0062b0c019a5cc0d75686837639',
+    'image_size_bytes': 30930,
   })
 # ---
 # name: TestBodyFiltering.test_non_aligned_time_window
   dict({
     'first_tick_expected_after_start': True,
-    'image_hash': '4fee6e0037231e40f3e1eb9b374ce245ef5b69a05654f9afea9a932614795159',
-    'image_size_bytes': 30461,
+    'image_hash': '27248f6bb7297304af3d56e0e803594942981d878c1dedb44c4e074864cfc0b4',
+    'image_size_bytes': 30403,
     'start_time': '05:12 PM',
   })
 # ---
 # name: TestBodyFiltering.test_single_body_poor_visibility
   dict({
     'has_warning': True,
-    'image_hash': 'd69406d70121a949c371eceedc32e811bf65319d4c04e3e1ff731dd5a15eebc7',
-    'image_size_bytes': 42668,
+    'image_hash': '30fb98b0e1142cc88ce52cb49fd0e1f423fdbfe94f242c9c92b05478aa364ff8',
+    'image_size_bytes': 42362,
     'targets': list([
       'Mars',
     ]),
@@ -90,8 +90,8 @@
       'Moon': 32,
       'Saturn': 25,
     }),
-    'image_hash': 'f6c7c9244532488fd91d5dbfd30860b500af743a3b921626bf3918cd1e48235b',
-    'image_size_bytes': 78831,
+    'image_hash': 'd3f9314dfad056f2045ccfd9cce0e66d6547fcd2aa854a921132abae087501be',
+    'image_size_bytes': 72511,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',
@@ -290,8 +290,8 @@
         'total_visible_hours': 17,
       }),
     }),
-    'image_hash': 'ec3eb891b05237e4b9e41435fcc75f21076bd2d2c28a6e2057541335f09e602d',
-    'image_size_bytes': 55395,
+    'image_hash': '6df742149d5efd3b772a2709bbf9f26ca779e233d65ee16180d3dcf4e406c0aa',
+    'image_size_bytes': 54573,
     'times': list([
       '2025-11-24 08:00 PM',
       '2025-11-24 08:15 PM',
