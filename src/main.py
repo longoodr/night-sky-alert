@@ -4,6 +4,7 @@ import re
 import random
 import datetime
 import requests
+import numpy as np
 from skyfield.api import load, Topos, wgs84
 from skyfield import almanac
 import pytz
@@ -16,6 +17,7 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as path_effects
 from matplotlib import font_manager
 
 # Configure matplotlib to use portable custom fonts
@@ -38,7 +40,7 @@ print(f"Font configuration: {text_font_name} with fallback to {emoji_font_name}"
 
 class ChartColors:
     BACKGROUND = "#080F1B"
-    WARNING = '#ff4444'
+    WARNING = '#e07060'  # Warm coral - fits twilight palette
     
     # Navy to yellow via muted twilight purple
     # Midnight blue → twilight purple → dawn ember → sunrise yellow
@@ -526,6 +528,12 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     cbar.ax.yaxis.set_tick_params(color=ChartColors.TEXT, labelcolor=ChartColors.TEXT)
     cbar.outline.set_edgecolor(ChartColors.TEXT)
     
+    # Add outline to colorbar labels - use not visible color for contrast
+    cbar_outline = [path_effects.withStroke(linewidth=2, foreground=ChartColors.ALT_NOT_VISIBLE)]
+    cbar.ax.yaxis.label.set_path_effects(cbar_outline)
+    for label in cbar.ax.get_yticklabels():
+        label.set_path_effects(cbar_outline)
+    
     # Set ticks and labels - add moon emoji to Moon label
     ax.set_yticks(range(num_bodies))
     y_labels = []
@@ -553,9 +561,13 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     padding = 0
     x_offset = -(max_width + padding)
     
+    # Text outline effect for readability over starfield
+    text_outline = [path_effects.withStroke(linewidth=2, foreground=ChartColors.ALT_NOT_VISIBLE)]
+    
     for label in ax.get_yticklabels():
         label.set_horizontalalignment('left')
         label.set_x(x_offset)
+        label.set_path_effects(text_outline)
     
     # Generate ticks based on aligned times
     current_tick = aligned_start
@@ -585,9 +597,10 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
     
-    # Apply colors
+    # Apply colors and outline effect
     for i, color in enumerate(tick_colors):
         ax.get_xticklabels()[i].set_color(color)
+        ax.get_xticklabels()[i].set_path_effects(text_outline)
         # if color == '#ff4444':
         #     ax.get_xticklabels()[i].set_weight('bold')
 
@@ -631,9 +644,13 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     else:
         title_text = 'Visibility Report'
     
+    # Text outline effect for readability over starfield
+    text_outline = [path_effects.withStroke(linewidth=2, foreground=ChartColors.ALT_NOT_VISIBLE)]
+    
     # Use suptitle to keep title at the top of the figure, independent of the plot axis
     # Align title with the plot center (0.475) to match the Time label
-    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885, color=ChartColors.TEXT)
+    title = fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885, color=ChartColors.TEXT)
+    title.set_path_effects(text_outline)
     
     # Calculate Y position for labels (Time and Warning)
     # Place them approx 0.95 inches below the plot area to clear rotated tick labels
@@ -642,21 +659,129 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     # Add Time label manually to align with warning text
     # Plot is from 0.1 to 0.85 (width 0.75), so center is 0.475
-    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold', color=ChartColors.TEXT)
+    time_label = fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold', color=ChartColors.TEXT)
+    time_label.set_path_effects(text_outline)
     
     # Add note about red time labels (bottom right corner)
     if weather_blocks:
         has_bad_weather = any(not wb['good'] for wb in weather_blocks.values())
         if has_bad_weather:
             # Position in line with Time label, aligned with right edge of plot (0.85)
-            fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions', 
+            warning_label = fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions.',
                     ha='right', va='bottom', fontsize=9, style='italic', color=ChartColors.WARNING)
+            warning_label.set_path_effects(text_outline)
     
     # plt.tight_layout() # Removed as it conflicts with add_axes
     
-    # Save to bytes buffer
+    # First render to determine actual output size
+    buf_temp = io.BytesIO()
+    plt.savefig(buf_temp, format='png', dpi=150, bbox_inches='tight', facecolor=ChartColors.BACKGROUND)
+    buf_temp.seek(0)
+    
+    # Get dimensions from rendered image
+    from PIL import Image, ImageDraw
+    temp_img = Image.open(buf_temp)
+    width, height = temp_img.size
+    temp_img.close()
+    
+    # Generate starfield background at exact size
+    def hex_to_rgb(hex_color):
+        h = hex_color.lstrip('#')
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    
+    bg_rgb = hex_to_rgb(ChartColors.BACKGROUND)
+    starfield = Image.new('RGB', (width, height), bg_rgb)
+    draw = ImageDraw.Draw(starfield)
+    
+    np.random.seed(42)
+    n_stars = 10000
+    for _ in range(n_stars):
+        x = np.random.randint(0, width)
+        y = np.random.randint(0, height)
+        
+        # Exponential size distribution (most stars tiny, exponential tail, truncate at 2)
+        size = np.random.exponential(scale=0.4)
+        size = min(size, 2.0)  # Truncate at 2
+        size = max(size, 0.3)  # Minimum visible size
+        
+        # Stellar classification with realistic frequencies
+        # Hotter stars are rarer but intrinsically brighter
+        # Cooler stars are common but dimmer
+        color_choice = np.random.choice([
+            'O_blue',       # O stars - very rare, very hot, very bright
+            'B_blue_white', # B stars - rare, hot, bright  
+            'A_white',      # A stars - uncommon, bright
+            'F_cream',      # F stars - moderate
+            'G_yellow',     # G stars (Sun-like) - common
+            'K_gold',       # K stars - very common
+            'M_red',        # M stars - most common, dimmest
+        ], p=[0.01, 0.04, 0.08, 0.15, 0.20, 0.25, 0.27])
+        
+        # Base colors and intrinsic brightness by spectral type
+        # Hotter = bluer and intrinsically brighter, Cooler = redder and dimmer
+        if color_choice == 'O_blue':
+            base = (180, 200, 255)
+            intrinsic_brightness = 0.9  # Very bright
+        elif color_choice == 'B_blue_white':
+            base = (200, 220, 255)
+            intrinsic_brightness = 0.75
+        elif color_choice == 'A_white':
+            base = (240, 245, 255)
+            intrinsic_brightness = 0.6
+        elif color_choice == 'F_cream':
+            base = (255, 250, 230)
+            intrinsic_brightness = 0.45
+        elif color_choice == 'G_yellow':
+            base = (255, 245, 200)
+            intrinsic_brightness = 0.35
+        elif color_choice == 'K_gold':
+            base = (255, 220, 160)
+            intrinsic_brightness = 0.25
+        else:  # M_red
+            base = (255, 190, 140)
+            intrinsic_brightness = 0.15
+        
+        # Brightness scales with size (bigger apparent size = brighter)
+        # and intrinsic brightness (spectral type)
+        size_factor = (size - 0.3) / 1.7  # Normalize size to 0-1 range
+        brightness = intrinsic_brightness * (0.4 + 0.6 * size_factor)
+        # Add slight random variation
+        brightness *= np.random.uniform(0.8, 1.0)
+        brightness = min(brightness, 0.85)
+        
+        # Blend star color with background based on brightness
+        color = tuple(int(bg_rgb[i] + (base[i] - bg_rgb[i]) * brightness) for i in range(3))
+        
+        r = size
+        draw.ellipse([x-r, y-r, x+r, y+r], fill=color)
+    
+    # Convert starfield to format matplotlib can use as background
+    starfield_array = np.array(starfield)
+    
+    # Now render again with starfield as background using figimage
+    plt.close('all')
+    fig2 = plt.figure(figsize=(14, chart_height), facecolor=ChartColors.BACKGROUND)
+    
+    # Place starfield image at pixel coordinates (0,0) - this goes behind everything
+    fig2.figimage(starfield_array, xo=0, yo=0, zorder=-1)
+    
+    # Recreate axes on top of starfield - need to rebuild the chart
+    # Actually, let's just composite with PIL instead
+    plt.close('all')
+    
+    # Re-render the chart
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=ChartColors.BACKGROUND)
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='none')  # transparent bg
+    buf.seek(0)
+    
+    chart_img = Image.open(buf).convert('RGBA')
+    starfield_rgba = starfield.convert('RGBA')
+    
+    # Composite chart on top of starfield
+    result = Image.alpha_composite(starfield_rgba, chart_img)
+    
+    buf = io.BytesIO()
+    result.save(buf, format='PNG')
     buf.seek(0)
     plt.close()
     
