@@ -215,6 +215,134 @@ def validate_time_window_against_sun():
     except Exception as e:
         print(f"Warning: Could not validate time window against sun position: {e}")
 
+
+def calculate_viewing_window(now, latitude, longitude, start_time_str=None, end_time_str=None):
+    """
+    Calculate the viewing window (start and end times) based on sun position and settings.
+    
+    Args:
+        now: Current datetime (timezone-aware)
+        latitude: Observer latitude
+        longitude: Observer longitude  
+        start_time_str: Optional custom start time in "HH:MM" format
+        end_time_str: Optional custom end time in "HH:MM" format
+        
+    Returns:
+        tuple: (start_dt, end_dt) - Both timezone-aware datetimes
+        
+    Logic:
+        - If currently in darkness (after sunset, before sunrise): use current night
+        - Otherwise: use upcoming night (next sunset to following midnight/sunrise)
+        - Default end time is midnight unless custom end_time specified
+        - Custom times override astronomical calculations
+    """
+    ts = load.timescale()
+    eph = load('de421.bsp')
+    observer = wgs84.latlon(latitude, longitude)
+
+    # Look back 24 hours and forward 24 hours to find relevant sunset/sunrise
+    t0 = ts.from_datetime(now - datetime.timedelta(days=1))
+    t1 = ts.from_datetime(now + datetime.timedelta(days=1))
+    
+    # Find all sun events in the 48-hour window
+    f = almanac.find_discrete(t0, t1, almanac.sunrise_sunset(eph, observer))
+    
+    local_tz = now.tzinfo
+    
+    # Collect all sunsets and sunrises
+    # Note: sunrise_sunset returns True (1) for sunrise, False (0) for sunset
+    sunsets = []
+    sunrises = []
+    for t, event in zip(f[0], f[1]):
+        dt = t.astimezone(local_tz)
+        if event == 1:  # Sunrise (sun crosses above horizon)
+            sunrises.append(dt)
+        elif event == 0:  # Sunset (sun crosses below horizon)
+            sunsets.append(dt)
+    
+    # Determine which night we're in or approaching
+    sunset_dt = None
+    sunrise_dt = None
+    
+    # Find the most recent sunset before or at now
+    past_sunsets = [s for s in sunsets if s <= now]
+    future_sunsets = [s for s in sunsets if s > now]
+    past_sunrises = [s for s in sunrises if s <= now]
+    future_sunrises = [s for s in sunrises if s > now]
+    
+    # Determine if we're currently in darkness (nighttime)
+    # We're in darkness if: last sunset > last sunrise (sunset happened more recently)
+    in_darkness = False
+    if past_sunsets and past_sunrises:
+        most_recent_sunset = max(past_sunsets)
+        most_recent_sunrise = max(past_sunrises)
+        if most_recent_sunset > most_recent_sunrise:
+            # Sunset was more recent than sunrise = it's nighttime
+            in_darkness = True
+            sunset_dt = most_recent_sunset
+            if future_sunrises:
+                sunrise_dt = min(future_sunrises)
+    elif past_sunsets and not past_sunrises:
+        # Only sunsets in the past, no sunrise yet = still night from yesterday
+        in_darkness = True
+        sunset_dt = max(past_sunsets)
+        if future_sunrises:
+            sunrise_dt = min(future_sunrises)
+    
+    # If we're not in darkness (daytime) or didn't find current night, use upcoming night
+    if sunset_dt is None:
+        if future_sunsets:
+            sunset_dt = min(future_sunsets)
+            # Find the sunrise after this sunset
+            sunrises_after_sunset = [s for s in sunrises if s > sunset_dt]
+            if sunrises_after_sunset:
+                sunrise_dt = min(sunrises_after_sunset)
+    
+    # Fallback if astronomical calculation fails
+    if not sunset_dt:
+        sunset_dt = now.replace(hour=18, minute=0, second=0, microsecond=0)
+    if not sunrise_dt:
+        sunrise_dt = (sunset_dt + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+
+    # Apply default end time of midnight if no custom end time specified
+    if not end_time_str:
+        midnight = (sunset_dt + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        if midnight <= sunset_dt:
+            midnight += datetime.timedelta(days=1)
+        sunrise_dt = midnight
+
+    # Override with custom start time if provided
+    if start_time_str:
+        h, m = map(int, start_time_str.split(':'))
+        start_candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if h >= 12:  # Evening time
+            # If it's already past this time today but we're in darkness, 
+            # the sunset already happened
+            if start_candidate <= now and sunset_dt and sunset_dt <= now:
+                # Keep the astronomical sunset
+                pass
+            else:
+                sunset_dt = start_candidate
+        else:  # Morning time - unusual for start
+            sunset_dt = start_candidate
+    
+    # Override with custom end time if provided
+    if end_time_str:
+        h, m = map(int, end_time_str.split(':'))
+        end_candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        
+        # End time should be after start time
+        if end_candidate <= sunset_dt:
+            end_candidate += datetime.timedelta(days=1)
+        sunrise_dt = end_candidate
+    
+    # Final validation: ensure end is after start
+    if sunrise_dt <= sunset_dt:
+        sunrise_dt += datetime.timedelta(days=1)
+    
+    return sunset_dt, sunrise_dt
+
+
 # Target Bodies
 TARGETS = ['Moon', 'Mars', 'Jupiter', 'Saturn']
 
@@ -830,71 +958,24 @@ def main():
     # 2. Determine Time Window (Tonight)
     now = datetime.datetime.now(local_tz)
     
-    # Load Skyfield data
-    ts = load.timescale()
-    eph = load('de421.bsp')
-    observer = wgs84.latlon(settings.latitude, settings.longitude)
-
-    # Calculate Sun events for dynamic window
-    t0 = ts.from_datetime(now)
-    t1 = ts.from_datetime(now + datetime.timedelta(days=1))
-    
-    # Find sunset today and sunrise tomorrow
-    f = almanac.find_discrete(t0, t1, almanac.sunrise_sunset(eph, observer))
-    
-    sunset_dt = None
-    sunrise_dt = None
-
-    # Logic to find the *next* sunset and the *following* sunrise
-    # This is a simplified approach; for a robust script we iterate the events
-    for t, event in zip(f[0], f[1]):
-        dt = t.astimezone(local_tz)
-        if event == 1: # Sunset
-            if sunset_dt is None: sunset_dt = dt
-        elif event == 0: # Sunrise
-            if sunrise_dt is None and sunset_dt is not None: 
-                sunrise_dt = dt
-    
-    # Fallback if astronomical calculation fails or happens at odd times (e.g. polar regions)
-    if not sunset_dt:
-        sunset_dt = now.replace(hour=18, minute=0, second=0, microsecond=0)
-    if not sunrise_dt:
-        sunrise_dt = (now + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
-
-    # Override with custom times if provided
-    # Smart date handling: if time is before sunrise, it's "tomorrow morning", otherwise "today"
-    if settings.start_time:
-        h, m = map(int, settings.start_time.split(':'))
-        start_candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        # If the start time is before sunrise and sunrise is today, the start time is likely tonight
-        # This handles cases like START_TIME=23:00 (tonight)
-        sunset_dt = start_candidate
-    
-    if settings.end_time:
-        h, m = map(int, settings.end_time.split(':'))
-        end_candidate_today = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        end_candidate_tomorrow = (now + datetime.timedelta(days=1)).replace(hour=h, minute=m, second=0, microsecond=0)
-        
-        # If sunrise hasn't happened yet and end time is before sunrise, use today
-        # Otherwise, if end time is after midnight (small hour value), use tomorrow
-        if sunrise_dt and end_candidate_today < sunrise_dt and now < sunrise_dt:
-            # We're currently before sunrise, and end time is also before sunrise -> use today
-            sunrise_dt = end_candidate_today
-        elif h < 12:  # Early morning hours (00:00 - 11:59) likely mean next day
-            sunrise_dt = end_candidate_tomorrow
-        else:  # Afternoon/evening hours mean today
-            sunrise_dt = end_candidate_today
-    
-    # Ensure end time is after start time
-    if sunset_dt and sunrise_dt and sunrise_dt <= sunset_dt:
-        # End time is before or equal to start time, so it must be next day
-        sunrise_dt += datetime.timedelta(days=1)
+    sunset_dt, sunrise_dt = calculate_viewing_window(
+        now, 
+        settings.latitude, 
+        settings.longitude,
+        settings.start_time,
+        settings.end_time
+    )
 
     print(f"\n--- Time Window ---")
     print(f"Start: {sunset_dt.strftime('%Y-%m-%d %I:%M %p')}")
     print(f"End:   {sunrise_dt.strftime('%Y-%m-%d %I:%M %p')}")
     window_hours = (sunrise_dt - sunset_dt).total_seconds() / 3600
     print(f"Duration: {window_hours:.1f} hours")
+    
+    # Load Skyfield data for body calculations
+    ts = load.timescale()
+    eph = load('de421.bsp')
+    observer = wgs84.latlon(settings.latitude, settings.longitude)
 
     # 3. Process Weather Data
     hourly = weather_data.get('hourly', {})
