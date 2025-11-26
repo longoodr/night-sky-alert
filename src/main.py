@@ -18,22 +18,41 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib import font_manager
 
-# Configure matplotlib to use fonts that support emojis
-# Try to use Segoe UI Emoji (Windows), Apple Color Emoji (Mac), or Noto Color Emoji (Linux)
-emoji_fonts = ['Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', 'Symbola']
-available_fonts = [f.name for f in font_manager.fontManager.ttflist]
+# Configure matplotlib to use portable custom fonts
+# User must provide 'arial.ttf' and 'emoji.ttf' in the assets folder
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+text_font_path = os.path.join(project_root, 'assets', 'font.ttf')
+emoji_font_path = os.path.join(project_root, 'assets', 'emoji.ttf')
 
-emoji_font = None
-for font in emoji_fonts:
-    if font in available_fonts:
-        emoji_font = font
-        break
+# Register custom fonts
+font_manager.fontManager.addfont(text_font_path)
+font_manager.fontManager.addfont(emoji_font_path)
 
-if emoji_font:
-    plt.rcParams['font.family'] = ['DejaVu Sans', emoji_font]
-    print(f"Using emoji font: {emoji_font}")
-else:
-    print("No emoji font found, emojis may not render correctly")
+# Get internal font names to configure the family list correctly
+text_font_name = font_manager.FontProperties(fname=text_font_path).get_name()
+emoji_font_name = font_manager.FontProperties(fname=emoji_font_path).get_name()
+
+# Set font family priority: Text Font -> Emoji Font
+plt.rcParams['font.family'] = [text_font_name, emoji_font_name]
+print(f"Font configuration: {text_font_name} with fallback to {emoji_font_name}")
+
+class ChartColors:
+    BACKGROUND = "#080F1B"
+    WARNING = '#ff4444'
+    
+    # Navy to yellow via muted twilight purple
+    # Midnight blue → twilight purple → dawn ember → sunrise yellow
+    ALT_NOT_VISIBLE = '#00000a'
+    ALT_LOW = '#1a3366'
+    ALT_MID = '#775588'
+    ALT_HIGH = '#cc8866'
+    ALT_ZENITH = '#eee8bb'
+    TEXT = ALT_ZENITH
+    DOT_FILL = ALT_ZENITH
+    DOT_EDGE = '#000022'
+    GRID = ALT_ZENITH
+
+
 
 class Settings(BaseSettings):
     latitude: float = Field(..., description="Latitude of the location")
@@ -333,11 +352,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     needed_body_height = len(targets) * BODY_HEIGHT_INCH
     chart_height = max(MIN_FIG_HEIGHT, BASE_HEIGHT_INCH + needed_body_height)
     
-    # Dark mode colors
-    bg_color = '#121212'
-    text_color = '#ffffff'
-    
-    fig = plt.figure(figsize=(14, chart_height), facecolor=bg_color)
+    fig = plt.figure(figsize=(14, chart_height), facecolor=ChartColors.BACKGROUND)
     
     # Calculate normalized coordinates for the plot axes
     # We want the plot to be exactly 'needed_body_height' inches tall
@@ -353,10 +368,10 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     ax = fig.add_axes([0.1, plot_bottom_norm, 0.75, plot_height_norm])
     
     # Set axis colors for dark mode
-    ax.tick_params(axis='x', colors=text_color)
-    ax.tick_params(axis='y', colors=text_color)
+    ax.tick_params(axis='x', colors=ChartColors.TEXT)
+    ax.tick_params(axis='y', colors=ChartColors.TEXT)
     for spine in ax.spines.values():
-        spine.set_edgecolor(text_color)
+        spine.set_edgecolor(ChartColors.TEXT)
     
     # Colorbar: To the right, tall (elongated scale)
     # Let's make it 80% of the figure height, centered
@@ -381,25 +396,17 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
             else:
                 matrix[b_idx][t_idx] = -1
     
-    # Create continuous colormap: black (not visible) → blues (0-30°) → cyans (30-60°) → white (60-90°)
-    # Blues for low altitudes, white for high altitudes (no yellow)
+    # Navy → neutral gray → warm yellow (avoids green by desaturating in middle)
     colors_list = [
-        (0.0, '#000000'),   # Not visible (black)
-        (0.01, '#000033'),  # Just above horizon (very dark blue)
-        (0.11, '#001a66'),  # Low (dark navy)
-        (0.22, '#003399'),  # Low (navy blue)
-        (0.33, '#0055cc'),  # Low-medium (blue) - end of bottom third
-        (0.44, '#2288dd'),  # Medium (light blue)
-        (0.55, '#44aaee'),  # Medium (bright cyan)
-        (0.66, '#66ccff'),  # Medium-high (cyan) - end of middle third
-        (0.77, '#99ddff'),  # High (light cyan)
-        (0.88, '#cceeff'),  # Very high (very light cyan)
-        (1.0, '#ffffff')    # Zenith (white)
+        (0.0, ChartColors.ALT_NOT_VISIBLE),   # Deep night (near black)
+        (0.25, ChartColors.ALT_LOW),          # Dark navy
+        (0.5, ChartColors.ALT_MID),           # Neutral gray-blue (pivot point)
+        (0.75, ChartColors.ALT_HIGH),         # Warm tan
+        (1.0, ChartColors.ALT_ZENITH)         # Bright starlight yellow
     ]
     
     from matplotlib.colors import LinearSegmentedColormap
-    # Increase N to 2048 to prevent color banding/quantization artifacts
-    cmap = LinearSegmentedColormap.from_list('altitude', colors_list, N=16384)
+    cmap = LinearSegmentedColormap.from_list('altitude', colors_list, N=256)
     
     # Normalize: -1 to 90 degrees mapped to 0-1 colormap range
     # Values < 0 (not visible) → 0 (black)
@@ -513,11 +520,11 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     # Add colorbar showing altitude scale
     # Use the dedicated colorbar axes
     cbar = plt.colorbar(im, cax=cax)
-    cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11, color=text_color)
+    cbar.set_label('Altitude', rotation=270, labelpad=20, fontsize=11, color=ChartColors.TEXT)
     cbar.set_ticks([0, 0.17, 0.34, 0.51, 0.68, 0.84, 1.0])
     cbar.set_ticklabels(['≤0°', '15°', '30°', '45°', '60°', '75°', '90°'])
-    cbar.ax.yaxis.set_tick_params(color=text_color, labelcolor=text_color)
-    cbar.outline.set_edgecolor(text_color)
+    cbar.ax.yaxis.set_tick_params(color=ChartColors.TEXT, labelcolor=ChartColors.TEXT)
+    cbar.outline.set_edgecolor(ChartColors.TEXT)
     
     # Set ticks and labels - add moon emoji to Moon label
     ax.set_yticks(range(num_bodies))
@@ -527,7 +534,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
             y_labels.append(f'Moon {moon_phase_emoji}')
         else:
             y_labels.append(target)
-    ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold', color=text_color)
+    ax.set_yticklabels(y_labels, fontsize=12, fontweight='bold', color=ChartColors.TEXT)
     
     # Left align y-axis labels using exact width calculation
     # We need to draw the canvas to get the text extents
@@ -566,11 +573,11 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         tick_labels.append(current_tick.strftime('%I:%M %p'))
         
         # Check weather for this tick
-        color = text_color
+        color = ChartColors.TEXT
         if weather_blocks:
             nearest_hour = current_tick.replace(minute=0, second=0, microsecond=0)
             if nearest_hour in weather_blocks and not weather_blocks[nearest_hour]['good']:
-                color = '#ff4444'
+                color = ChartColors.WARNING
         tick_colors.append(color)
         
         current_tick += datetime.timedelta(minutes=30)
@@ -608,25 +615,25 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
                     
                     y_pos = bottom_limit - (norm_alt * draw_height)
                     
-                    ax.plot(x_pos, y_pos, 'o', color='white', markeredgecolor='black', markeredgewidth=0.5, markersize=4)
+                    ax.plot(x_pos, y_pos, 'o', color=ChartColors.DOT_FILL, markeredgecolor=ChartColors.DOT_EDGE, markeredgewidth=0.5, markersize=4)
     
     # Grid - horizontal only to separate bodies, no vertical lines
     ax.set_yticks([y - 0.5 for y in range(1, num_bodies)], minor=True)
-    ax.grid(which='minor', axis='y', color='white', linestyle='-', linewidth=0.5, alpha=0.3)
+    ax.grid(which='minor', axis='y', color=ChartColors.GRID, linestyle='-', linewidth=0.5, alpha=0.3)
     
     # Title with location and date
     if location_name and date_str:
-        title_text = f'Visibility Report: {location_name} | {date_str}'
+        title_text = f'Visibility Report · {location_name} · {date_str}'
     elif location_name:
-        title_text = f'Visibility Report: {location_name}'
+        title_text = f'Visibility Report · {location_name}'
     elif date_str:
-        title_text = f'Visibility Report: {date_str}'
+        title_text = f'Visibility Report · {date_str}'
     else:
         title_text = 'Visibility Report'
     
     # Use suptitle to keep title at the top of the figure, independent of the plot axis
     # Align title with the plot center (0.475) to match the Time label
-    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885, color=text_color)
+    fig.suptitle(title_text, fontsize=16, fontweight='bold', x=0.475, y=0.885, color=ChartColors.TEXT)
     
     # Calculate Y position for labels (Time and Warning)
     # Place them approx 0.95 inches below the plot area to clear rotated tick labels
@@ -635,7 +642,7 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
     
     # Add Time label manually to align with warning text
     # Plot is from 0.1 to 0.85 (width 0.75), so center is 0.475
-    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold', color=text_color)
+    fig.text(0.475, label_y_pos, 'Time', ha='center', va='bottom', fontsize=12, fontweight='bold', color=ChartColors.TEXT)
     
     # Add note about red time labels (bottom right corner)
     if weather_blocks:
@@ -643,13 +650,13 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
         if has_bad_weather:
             # Position in line with Time label, aligned with right edge of plot (0.85)
             fig.text(0.85, label_y_pos, 'Red times indicate poor visibility conditions', 
-                    ha='right', va='bottom', fontsize=9, style='italic', color='#ff4444')
+                    ha='right', va='bottom', fontsize=9, style='italic', color=ChartColors.WARNING)
     
     # plt.tight_layout() # Removed as it conflicts with add_axes
     
     # Save to bytes buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=bg_color)
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=ChartColors.BACKGROUND)
     buf.seek(0)
     plt.close()
     
