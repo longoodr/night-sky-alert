@@ -143,33 +143,35 @@ class TestSettingsEmptyStringHandling:
         assert settings.start_time is None  # default
         assert settings.end_time == "05:00"
 
-    def test_no_location_or_coords_raises_error(self):
-        """Should raise error when neither location nor coordinates provided."""
+    def test_no_location_or_coords_allowed_in_settings(self):
+        """Settings should accept empty location and coordinates (validation happens at runtime)."""
         from main import Settings
-        from pydantic import ValidationError
         
-        with pytest.raises(ValidationError) as exc_info:
-            Settings(
-                location="",
-                latitude="",
-                longitude="",
-            )
+        # This should NOT raise - validation happens in resolve_location() at runtime
+        settings = Settings(
+            location="",
+            latitude="",
+            longitude="",
+        )
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        # All should be None after empty string normalization
+        assert settings.location is None
+        assert settings.latitude is None
+        assert settings.longitude is None
 
-    def test_partial_coordinates_raises_error(self):
-        """Should raise error when only one coordinate is provided."""
+    def test_partial_coordinates_allowed_in_settings(self):
+        """Settings should accept partial coordinates (validation happens at runtime)."""
         from main import Settings
-        from pydantic import ValidationError
         
-        with pytest.raises(ValidationError) as exc_info:
-            Settings(
-                location="",
-                latitude=28.5383,
-                longitude="",
-            )
+        # This should NOT raise - validation happens in resolve_location() at runtime
+        settings = Settings(
+            location="",
+            latitude=28.5383,
+            longitude="",
+        )
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        assert settings.latitude == 28.5383
+        assert settings.longitude is None
 
 
 class TestNormalizeEmptyStringHelper:
