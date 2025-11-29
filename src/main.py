@@ -215,32 +215,46 @@ class Settings(BaseSettings):
         return v
 
 
-def resolve_location():
+class LocationConfigError(Exception):
+    """Raised when location configuration is invalid."""
+    pass
+
+
+def resolve_location(settings_obj=None):
     """
     Resolve location from settings. Either geocodes a location name or uses provided coordinates.
     Must be called before using settings.latitude/longitude.
+    
+    Args:
+        settings_obj: Settings object to use (defaults to global settings)
+        
+    Raises:
+        LocationConfigError: If neither location nor coordinates are provided,
+                            or if geocoding fails.
     """
-    has_location = settings.location is not None and settings.location.strip() != ''
-    has_coords = settings.latitude is not None and settings.longitude is not None
+    if settings_obj is None:
+        settings_obj = settings
+        
+    has_location = settings_obj.location is not None and settings_obj.location.strip() != ''
+    has_coords = settings_obj.latitude is not None and settings_obj.longitude is not None
     
     if not has_location and not has_coords:
-        print("Configuration Error:")
-        print("Either 'location' OR both 'latitude' and 'longitude' must be provided.")
-        print("Set LOCATION='Orlando, Florida' or set LATITUDE and LONGITUDE.")
-        sys.exit(1)
+        raise LocationConfigError(
+            "Either 'location' OR both 'latitude' and 'longitude' must be provided. "
+            "Set LOCATION='Orlando, Florida' or set LATITUDE and LONGITUDE."
+        )
     
     if has_location:
         # Geocode the location to get coordinates
         try:
-            lat, lon, display_name = geocode_location(settings.location)
+            lat, lon, display_name = geocode_location(settings_obj.location)
             # Update settings with resolved values
-            object.__setattr__(settings, 'latitude', lat)
-            object.__setattr__(settings, 'longitude', lon)
-            object.__setattr__(settings, 'location_name', display_name)
-            print(f"Geocoded '{settings.location}' -> {display_name} ({lat:.4f}, {lon:.4f})")
+            object.__setattr__(settings_obj, 'latitude', lat)
+            object.__setattr__(settings_obj, 'longitude', lon)
+            object.__setattr__(settings_obj, 'location_name', display_name)
+            print(f"Geocoded '{settings_obj.location}' -> {display_name} ({lat:.4f}, {lon:.4f})")
         except ValueError as e:
-            print(f"Configuration Error: {e}")
-            sys.exit(1)
+            raise LocationConfigError(str(e))
 
 
 try:
@@ -1046,7 +1060,12 @@ def create_visibility_chart(sorted_times, visibility_grid, body_visibility, targ
 
 def main():
     # Resolve location first - either geocode or validate coordinates
-    resolve_location()
+    try:
+        resolve_location()
+    except LocationConfigError as e:
+        print("Configuration Error:")
+        print(e)
+        sys.exit(1)
     
     print("=" * 60)
     print("NIGHT SKY ALERT SYSTEM")

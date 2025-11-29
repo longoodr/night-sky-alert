@@ -174,6 +174,163 @@ class TestSettingsEmptyStringHandling:
         assert settings.longitude is None
 
 
+class TestResolveLocation:
+    """Test the resolve_location function for location/coordinate validation."""
+
+    def test_resolve_with_coordinates_success(self):
+        """Should succeed when valid latitude and longitude are provided."""
+        from main import Settings, resolve_location
+        
+        settings = Settings(
+            location="",
+            latitude=28.5383,
+            longitude=-81.3792,
+        )
+        
+        # Should not raise
+        resolve_location(settings)
+        
+        # Coordinates should remain unchanged
+        assert settings.latitude == 28.5383
+        assert settings.longitude == -81.3792
+
+    def test_resolve_with_location_success(self):
+        """Should succeed and geocode when location name is provided."""
+        from main import Settings, resolve_location
+        
+        with patch('main.geocode_location') as mock_geocode:
+            mock_geocode.return_value = (28.5383, -81.3792, "Orlando, Florida")
+            
+            settings = Settings(
+                location="Orlando, Florida",
+                latitude="",
+                longitude="",
+            )
+            
+            # Should not raise
+            resolve_location(settings)
+            
+            # Should have geocoded coordinates
+            assert settings.latitude == 28.5383
+            assert settings.longitude == -81.3792
+            assert settings.location_name == "Orlando, Florida"
+            mock_geocode.assert_called_once_with("Orlando, Florida")
+
+    def test_resolve_with_location_prefers_geocoding_over_coords(self):
+        """When both location and coordinates provided, should use geocoding."""
+        from main import Settings, resolve_location
+        
+        with patch('main.geocode_location') as mock_geocode:
+            mock_geocode.return_value = (40.7128, -74.0060, "New York, NY")
+            
+            settings = Settings(
+                location="New York",
+                latitude=28.5383,  # These should be overwritten
+                longitude=-81.3792,
+            )
+            
+            resolve_location(settings)
+            
+            # Should have geocoded coordinates, not original ones
+            assert settings.latitude == 40.7128
+            assert settings.longitude == -74.0060
+            assert settings.location_name == "New York, NY"
+
+    def test_resolve_no_location_no_coords_raises_error(self):
+        """Should raise LocationConfigError when neither location nor coordinates provided."""
+        from main import Settings, resolve_location, LocationConfigError
+        
+        settings = Settings(
+            location="",
+            latitude="",
+            longitude="",
+        )
+        
+        with pytest.raises(LocationConfigError) as exc_info:
+            resolve_location(settings)
+        
+        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+
+    def test_resolve_partial_coords_raises_error(self):
+        """Should raise LocationConfigError when only latitude is provided."""
+        from main import Settings, resolve_location, LocationConfigError
+        
+        settings = Settings(
+            location="",
+            latitude=28.5383,
+            longitude="",
+        )
+        
+        with pytest.raises(LocationConfigError) as exc_info:
+            resolve_location(settings)
+        
+        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+
+    def test_resolve_partial_coords_longitude_only_raises_error(self):
+        """Should raise LocationConfigError when only longitude is provided."""
+        from main import Settings, resolve_location, LocationConfigError
+        
+        settings = Settings(
+            location="",
+            latitude="",
+            longitude=-81.3792,
+        )
+        
+        with pytest.raises(LocationConfigError) as exc_info:
+            resolve_location(settings)
+        
+        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+
+    def test_resolve_geocoding_failure_raises_error(self):
+        """Should raise LocationConfigError when geocoding fails."""
+        from main import Settings, resolve_location, LocationConfigError
+        
+        with patch('main.geocode_location') as mock_geocode:
+            mock_geocode.side_effect = ValueError("Location not found: 'InvalidPlace123'")
+            
+            settings = Settings(
+                location="InvalidPlace123",
+                latitude="",
+                longitude="",
+            )
+            
+            with pytest.raises(LocationConfigError) as exc_info:
+                resolve_location(settings)
+            
+            assert "Location not found" in str(exc_info.value)
+
+    def test_resolve_whitespace_only_location_treated_as_empty(self):
+        """Location with only whitespace should be treated as not provided."""
+        from main import Settings, resolve_location, LocationConfigError
+        
+        settings = Settings(
+            location="   ",  # whitespace only
+            latitude="",
+            longitude="",
+        )
+        
+        with pytest.raises(LocationConfigError) as exc_info:
+            resolve_location(settings)
+        
+        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+
+    def test_resolve_zero_coordinates_are_valid(self):
+        """Zero values for coordinates should be valid (e.g., equator/prime meridian)."""
+        from main import Settings, resolve_location
+        
+        settings = Settings(
+            location="",
+            latitude=0.0,
+            longitude=0.0,
+        )
+        
+        # Should not raise - (0, 0) is a valid coordinate
+        resolve_location(settings)
+        
+        assert settings.latitude == 0.0
+        assert settings.longitude == 0.0
+
+
 class TestNormalizeEmptyStringHelper:
     """Test the normalize_empty_string helper function."""
 
