@@ -117,6 +117,17 @@ def geocode_location(location_query: str) -> tuple[float, float, str]:
         raise ValueError(f"Failed to geocode location '{location_query}': {e}")
 
 
+def empty_string_to_none(v):
+    """
+    Convert empty strings to None.
+    GitHub Actions passes empty strings for unset env vars instead of null.
+    Use this helper to normalize empty strings across all settings.
+    """
+    if v == '':
+        return None
+    return v
+
+
 class Settings(BaseSettings):
     location: Optional[str] = Field(None, description="Location name to geocode (e.g., 'Orlando, Florida')")
     latitude: Optional[float] = Field(None, description="Latitude of the location")
@@ -133,66 +144,21 @@ class Settings(BaseSettings):
     start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
     end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
 
-    @field_validator('location', mode='before')
+    @model_validator(mode='before')
     @classmethod
-    def validate_location(cls, v):
-        """Convert empty strings to None for location"""
-        if v == '' or v is None:
-            return None
-        return v
-
-    @field_validator('cloud_cover_limit', mode='before')
-    @classmethod
-    def validate_cloud_cover(cls, v):
-        """Convert empty strings to default for cloud_cover_limit"""
-        if v == '' or v is None:
-            return 15.0
-        return v
-    
-    @field_validator('precip_prob_limit', mode='before')
-    @classmethod
-    def validate_precip_prob(cls, v):
-        """Convert empty strings to default for precip_prob_limit"""
-        if v == '' or v is None:
-            return 5.0
-        return v
-    
-    @field_validator('min_viewing_hours', mode='before')
-    @classmethod
-    def validate_min_viewing_hours(cls, v):
-        """Convert empty strings to default for min_viewing_hours"""
-        if v == '' or v is None:
-            return 1.0
-        return v
-    
-    @field_validator('check_interval_minutes', mode='before')
-    @classmethod
-    def validate_check_interval(cls, v):
-        """Convert empty strings to default for check_interval_minutes"""
-        if v == '' or v is None:
-            return 15
-        return v
-    
-    @field_validator('min_moon_illumination', mode='before')
-    @classmethod
-    def validate_min_moon(cls, v):
-        """Convert empty strings to default for min_moon_illumination"""
-        if v == '' or v is None:
-            return 0.0
-        return v
-    
-    @field_validator('max_moon_illumination', mode='before')
-    @classmethod
-    def validate_max_moon(cls, v):
-        """Convert empty strings to default for max_moon_illumination"""
-        if v == '' or v is None:
-            return 1.0
-        return v
+    def normalize_empty_strings(cls, data):
+        """
+        Convert all empty strings to None before field validation.
+        GitHub Actions passes empty strings instead of null for unset env vars.
+        """
+        if isinstance(data, dict):
+            return {k: empty_string_to_none(v) for k, v in data.items()}
+        return data
 
     @field_validator('start_time', 'end_time', mode='before')
     @classmethod
     def validate_time_format(cls, v):
-        if v is None or v == '':
+        if v is None:
             return None
         if not isinstance(v, str):
             return v
