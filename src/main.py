@@ -166,16 +166,21 @@ class Settings(BaseSettings):
     def normalize_empty_strings(cls, data):
         """
         Normalize empty strings from GitHub Actions.
-        For fields with defaults, replace empty strings with the default value.
-        For optional fields, replace empty strings with None.
+        GitHub Actions passes empty strings instead of null for unset env vars.
+        - For fields with explicit defaults, replace empty strings with that default.
+        - For optional fields, remove the key entirely so pydantic uses Field default.
         """
         if isinstance(data, dict):
             normalized = {}
             for k, v in data.items():
-                if k in _SETTINGS_FIELD_DEFAULTS:
-                    normalized[k] = normalize_empty_string(v, _SETTINGS_FIELD_DEFAULTS[k])
+                # Skip empty strings entirely - let pydantic use field defaults
+                if v == '':
+                    if k in _SETTINGS_FIELD_DEFAULTS:
+                        # Use explicit default for required fields
+                        normalized[k] = _SETTINGS_FIELD_DEFAULTS[k]
+                    # else: don't include key, let Field default apply
                 else:
-                    normalized[k] = normalize_empty_string(v, None)
+                    normalized[k] = v
             return normalized
         return data
 
