@@ -117,15 +117,32 @@ def geocode_location(location_query: str) -> tuple[float, float, str]:
         raise ValueError(f"Failed to geocode location '{location_query}': {e}")
 
 
-def empty_string_to_none(v):
+def normalize_empty_string(value, default=None):
     """
-    Convert empty strings to None.
+    Normalize empty strings from GitHub Actions to appropriate values.
     GitHub Actions passes empty strings for unset env vars instead of null.
-    Use this helper to normalize empty strings across all settings.
+    
+    Args:
+        value: The value to normalize
+        default: The default value to return if value is empty string or None
+        
+    Returns:
+        The original value if not empty, otherwise the default
     """
-    if v == '':
-        return None
-    return v
+    if value == '' or value is None:
+        return default
+    return value
+
+
+# Default values for Settings fields that need them when empty strings are passed
+_SETTINGS_FIELD_DEFAULTS = {
+    'cloud_cover_limit': 15.0,
+    'precip_prob_limit': 5.0,
+    'min_viewing_hours': 1.0,
+    'check_interval_minutes': 15,
+    'min_moon_illumination': 0.0,
+    'max_moon_illumination': 1.0,
+}
 
 
 class Settings(BaseSettings):
@@ -148,11 +165,18 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_empty_strings(cls, data):
         """
-        Convert all empty strings to None before field validation.
-        GitHub Actions passes empty strings instead of null for unset env vars.
+        Normalize empty strings from GitHub Actions.
+        For fields with defaults, replace empty strings with the default value.
+        For optional fields, replace empty strings with None.
         """
         if isinstance(data, dict):
-            return {k: empty_string_to_none(v) for k, v in data.items()}
+            normalized = {}
+            for k, v in data.items():
+                if k in _SETTINGS_FIELD_DEFAULTS:
+                    normalized[k] = normalize_empty_string(v, _SETTINGS_FIELD_DEFAULTS[k])
+                else:
+                    normalized[k] = normalize_empty_string(v, None)
+            return normalized
         return data
 
     @field_validator('start_time', 'end_time', mode='before')
