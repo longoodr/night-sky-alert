@@ -8,7 +8,7 @@ import numpy as np
 from skyfield.api import load, Topos, wgs84
 from skyfield import almanac
 import pytz
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, ValidationError, field_validator, model_validator
 from typing import Optional
 import base64
@@ -146,6 +146,8 @@ _SETTINGS_FIELD_DEFAULTS = {
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8')
+    
     location: Optional[str] = Field(None, description="Location name to geocode (e.g., 'Orlando, Florida')")
     latitude: Optional[float] = Field(None, description="Latitude of the location")
     longitude: Optional[float] = Field(None, description="Longitude of the location")
@@ -161,33 +163,43 @@ class Settings(BaseSettings):
     start_time: Optional[str] = Field(None, description="Custom start time HH:MM")
     end_time: Optional[str] = Field(None, description="Custom end time HH:MM")
 
-    @model_validator(mode='before')
+    # Normalize empty strings to None for optional string fields
+    @field_validator('location', 'pushover_user_key', 'pushover_api_token', mode='before')
     @classmethod
-    def normalize_empty_strings(cls, data):
-        """
-        Normalize empty strings from GitHub Actions.
-        GitHub Actions passes empty strings instead of null for unset env vars.
-        - For fields with explicit defaults, replace empty strings with that default.
-        - For optional fields, remove the key entirely so pydantic uses Field default.
-        """
-        if isinstance(data, dict):
-            normalized = {}
-            for k, v in data.items():
-                # Skip empty strings entirely - let pydantic use field defaults
-                if v == '':
-                    if k in _SETTINGS_FIELD_DEFAULTS:
-                        # Use explicit default for required fields
-                        normalized[k] = _SETTINGS_FIELD_DEFAULTS[k]
-                    # else: don't include key, let Field default apply
-                else:
-                    normalized[k] = v
-            return normalized
-        return data
+    def empty_str_to_none(cls, v):
+        if v == '':
+            return None
+        return v
+
+    # Normalize empty strings to None for optional float fields
+    @field_validator('latitude', 'longitude', mode='before')
+    @classmethod  
+    def empty_str_to_none_float(cls, v):
+        if v == '':
+            return None
+        return v
+
+    # Normalize empty strings to default for required float fields
+    @field_validator('cloud_cover_limit', 'precip_prob_limit', 'min_viewing_hours', 
+                     'min_moon_illumination', 'max_moon_illumination', mode='before')
+    @classmethod
+    def empty_str_to_default_float(cls, v, info):
+        if v == '':
+            return _SETTINGS_FIELD_DEFAULTS.get(info.field_name)
+        return v
+
+    # Normalize empty strings to default for required int fields  
+    @field_validator('check_interval_minutes', mode='before')
+    @classmethod
+    def empty_str_to_default_int(cls, v, info):
+        if v == '':
+            return _SETTINGS_FIELD_DEFAULTS.get(info.field_name)
+        return v
 
     @field_validator('start_time', 'end_time', mode='before')
     @classmethod
     def validate_time_format(cls, v):
-        if v is None:
+        if v is None or v == '':
             return None
         if not isinstance(v, str):
             return v
@@ -227,9 +239,6 @@ class Settings(BaseSettings):
         
         return self
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = 'utf-8'
 
 try:
     settings = Settings()
