@@ -234,9 +234,6 @@ def resolve_location(settings_obj=None):
     if settings_obj is None:
         settings_obj = settings
     
-    # Debug: print what we have
-    print(f"DEBUG: location='{settings_obj.location}', lat={settings_obj.latitude}, lon={settings_obj.longitude}")
-    
     # Try location name first
     if settings_obj.location is not None and settings_obj.location.strip() != '':
         try:
@@ -251,7 +248,6 @@ def resolve_location(settings_obj=None):
     
     # Fall back to coordinates
     if settings_obj.latitude is not None and settings_obj.longitude is not None:
-        print(f"Using provided coordinates: {settings_obj.latitude}, {settings_obj.longitude}")
         return
     
     # Nothing worked
