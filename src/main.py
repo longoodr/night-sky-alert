@@ -222,39 +222,42 @@ class LocationConfigError(Exception):
 
 def resolve_location(settings_obj=None):
     """
-    Resolve location from settings. Either geocodes a location name or uses provided coordinates.
+    Resolve location from settings. Tries location name first, then falls back to coordinates.
     Must be called before using settings.latitude/longitude.
     
     Args:
         settings_obj: Settings object to use (defaults to global settings)
         
     Raises:
-        LocationConfigError: If neither location nor coordinates are provided,
-                            or if geocoding fails.
+        LocationConfigError: If no valid location can be resolved.
     """
     if settings_obj is None:
         settings_obj = settings
-        
-    has_location = settings_obj.location is not None and settings_obj.location.strip() != ''
-    has_coords = settings_obj.latitude is not None and settings_obj.longitude is not None
     
-    if not has_location and not has_coords:
-        raise LocationConfigError(
-            "Either 'location' OR both 'latitude' and 'longitude' must be provided. "
-            "Set LOCATION='Orlando, Florida' or set LATITUDE and LONGITUDE."
-        )
+    # Debug: print what we have
+    print(f"DEBUG: location='{settings_obj.location}', lat={settings_obj.latitude}, lon={settings_obj.longitude}")
     
-    if has_location:
-        # Geocode the location to get coordinates
+    # Try location name first
+    if settings_obj.location is not None and settings_obj.location.strip() != '':
         try:
             lat, lon, display_name = geocode_location(settings_obj.location)
-            # Update settings with resolved values
             object.__setattr__(settings_obj, 'latitude', lat)
             object.__setattr__(settings_obj, 'longitude', lon)
             object.__setattr__(settings_obj, 'location_name', display_name)
             print(f"Geocoded '{settings_obj.location}' -> {display_name} ({lat:.4f}, {lon:.4f})")
+            return
         except ValueError as e:
             raise LocationConfigError(str(e))
+    
+    # Fall back to coordinates
+    if settings_obj.latitude is not None and settings_obj.longitude is not None:
+        print(f"Using provided coordinates: {settings_obj.latitude}, {settings_obj.longitude}")
+        return
+    
+    # Nothing worked
+    raise LocationConfigError(
+        "No valid location found. Set LOCATION='Orlando, Florida' or set both LATITUDE and LONGITUDE."
+    )
 
 
 try:

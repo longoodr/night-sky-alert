@@ -216,8 +216,8 @@ class TestResolveLocation:
             assert settings.location_name == "Orlando, Florida"
             mock_geocode.assert_called_once_with("Orlando, Florida")
 
-    def test_resolve_with_location_prefers_geocoding_over_coords(self):
-        """When both location and coordinates provided, should use geocoding."""
+    def test_resolve_with_location_ignores_coords(self):
+        """When location is provided, should use geocoding and ignore any coords."""
         from main import Settings, resolve_location
         
         with patch('main.geocode_location') as mock_geocode:
@@ -249,7 +249,7 @@ class TestResolveLocation:
         with pytest.raises(LocationConfigError) as exc_info:
             resolve_location(settings)
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        assert "No valid location found" in str(exc_info.value)
 
     def test_resolve_partial_coords_raises_error(self):
         """Should raise LocationConfigError when only latitude is provided."""
@@ -264,7 +264,7 @@ class TestResolveLocation:
         with pytest.raises(LocationConfigError) as exc_info:
             resolve_location(settings)
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        assert "No valid location found" in str(exc_info.value)
 
     def test_resolve_partial_coords_longitude_only_raises_error(self):
         """Should raise LocationConfigError when only longitude is provided."""
@@ -279,7 +279,7 @@ class TestResolveLocation:
         with pytest.raises(LocationConfigError) as exc_info:
             resolve_location(settings)
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        assert "No valid location found" in str(exc_info.value)
 
     def test_resolve_geocoding_failure_raises_error(self):
         """Should raise LocationConfigError when geocoding fails."""
@@ -299,20 +299,21 @@ class TestResolveLocation:
             
             assert "Location not found" in str(exc_info.value)
 
-    def test_resolve_whitespace_only_location_treated_as_empty(self):
-        """Location with only whitespace should be treated as not provided."""
-        from main import Settings, resolve_location, LocationConfigError
+    def test_resolve_whitespace_only_location_falls_back_to_coords(self):
+        """Location with only whitespace should fall back to coordinates."""
+        from main import Settings, resolve_location
         
         settings = Settings(
             location="   ",  # whitespace only
-            latitude="",
-            longitude="",
+            latitude=28.5383,
+            longitude=-81.3792,
         )
         
-        with pytest.raises(LocationConfigError) as exc_info:
-            resolve_location(settings)
+        # Should use coordinates instead
+        resolve_location(settings)
         
-        assert "Either 'location' OR both 'latitude' and 'longitude'" in str(exc_info.value)
+        assert settings.latitude == 28.5383
+        assert settings.longitude == -81.3792
 
     def test_resolve_zero_coordinates_are_valid(self):
         """Zero values for coordinates should be valid (e.g., equator/prime meridian)."""
