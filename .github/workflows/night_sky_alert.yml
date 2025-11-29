@@ -24,6 +24,7 @@ jobs:
 
       - name: Run Sky Alert Script
         env:
+          LOCATION: ${{ secrets.LOCATION }}
           LATITUDE: ${{ secrets.LATITUDE }}
           LONGITUDE: ${{ secrets.LONGITUDE }}
           PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
